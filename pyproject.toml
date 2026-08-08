@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "weatherwatch"
+version = "0.1.0"
+description = "Aggregate ATProto event weather telemetry. Counts the weather, keeps no people."
+requires-python = ">=3.11"
+dependencies = ["websockets>=10.4"]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.4"]
+
+[project.scripts]
+weatherwatch = "weatherwatch.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src", "."]

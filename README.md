@@ -1,51 +1,116 @@
-# weatherwatch — M0 verification spike
+# weatherwatch
 
-Working name, disposable. Aggregate ATProto/Bluesky event weather telemetry.
-Design candidate lives in the workspace root:
-`../CANDIDATE-AGGREGATE-WEATHER-TELEMETRY.md`.
+Working name, disposable. An aggregate ATProto/Bluesky event weather
+instrument: it counts network-level activity rates from a Jetstream source and
+keeps no people.
 
-**This repository currently contains M0 only** — a throwaway measurement and
-fixture-generation spike. There is no service, no database, no classifier, no
-dashboard. Do not build on `spike/`; it is meant to be deleted once M1 starts.
+Design candidate: `../CANDIDATE-AGGREGATE-WEATHER-TELEMETRY.md`.
+Measured protocol behaviour: [`M0-VERIFICATION-RESULTS.md`](M0-VERIFICATION-RESULTS.md).
 
-Results: [`M0-VERIFICATION-RESULTS.md`](M0-VERIFICATION-RESULTS.md).
+**Status: M0–M4 implemented. Local instrument, not a service.** There is no
+HTTP server, no public endpoint, no API, and nothing here is deployed or
+announced. Run it from a terminal against a local SQLite file.
 
-## Privacy rule (non-negotiable)
+## What it does
 
 ```
-live raw event -> inspect structure -> scrubbed fixture -> discard raw
+Jetstream (one named endpoint)
+  -> classify transiently          identity read, never returned
+  -> increment in-memory counters  ~90 possible keys, no free text
+  -> close 60s windows by stream clock
+  -> ONE transaction: buckets + window health + resume cursor
 ```
 
-Raw Jetstream events are inspected transiently in memory and never written to
-disk. The committed fixture corpus preserves classifier-relevant *structure*
-only: DIDs, rkeys, CIDs, URIs, handles, and all user-authored text are dropped
-or replaced with obvious synthetic values. Synthetic DIDs use the W3C-reserved
-`did:example:` method and synthetic hosts use RFC 2606 `.invalid`, so a
-synthetic value can never be mistaken for a real one.
+What is persisted: integer counts per (run, window, metric), an observation
+health row per window, and a resume cursor. That is all.
 
-`spike/check_fixture_privacy.py` is the tripwire that proves it. It self-tests
-against known-bad patterns before validating, so a validator that silently
-always passes fails loudly instead.
+What is never persisted, anywhere: raw events, DIDs, handles, rkeys, CIDs,
+URIs, post text, display names, descriptions, alt text, or URLs.
+
+## Privacy model
+
+The classifier is the identity boundary, and the guarantee is structural
+rather than filter-based: its output alphabet is a **finite frozenset**
+(`classify.ALLOWED_METRICS`, ~90 entries). A DID cannot appear in the output
+because no DID is a member of that set. Tests assert the containment against
+the whole fixture corpus, and a further test asserts that nothing
+identity-shaped reaches any database table.
+
+Test fixtures are scrubbed structure captured during M0 — synthetic DIDs use
+the reserved `did:example:` method and synthetic hosts use RFC 2606
+`.invalid`. `spike/check_fixture_privacy.py` is the tripwire.
+
+## Observation runs
+
+This is an instrument that *may* run continuously, not a daemon that must.
+
+| | |
+|---|---|
+| outside a run | NOT OBSERVED — no row exists |
+| inside a run, quiet | OBSERVED, EMPTY — row exists with `events_seen = 0` |
+| inside a run, degraded | OBSERVED, CONDITIONED — `coverage_state = degraded` |
+| missing interval in a run | GAP — `gap_us`, `resume_seam` |
+
+A machine being off between runs is not a failure and produces no fake missing
+windows. Partial first/last windows record their real observed duration and
+are flagged `partial`; they never masquerade as full ones.
+
+## Coverage claim
+
+    Aggregate activity observed from this Jetstream source during this
+    observation interval.
+
+M0 falsified the assumption that public Jetstream instances are
+interchangeable complete views: `jetstream1.*` delivered ~1.6x the post volume
+of `jetstream2.us-east` in a concurrent window, while two sockets to the same
+instance agreed exactly. So:
+
+* every run binds to one exact endpoint;
+* a cursor from one endpoint is never used against another;
+* changing endpoint starts a new run — a hard observation seam;
+* runs from different endpoints, or overlapping in time, refuse to be summed;
+* no relay is described as complete or as ground truth. Higher volume is not
+  evidence of greater completeness.
+
+## Usage
+
+```bash
+pip install -e .
+
+weatherwatch collect                       # unbounded, Ctrl-C to stop
+weatherwatch collect --duration 30m
+weatherwatch collect --endpoint jetstream2.us-east --duration 1h
+weatherwatch runs                          # list observation runs
+weatherwatch show <run_id>                 # per-run totals and coverage
+```
+
+Default endpoint is `jetstream1.us-east` — the higher-volume endpoint M0
+measured. Configurable, and the choice is recorded on every run.
+
+Keep the SQLite file on local disk. Never NFS/SMB/NAS.
 
 ## Layout
 
 ```
-spike/m0_probe.py             survey / cursor / control probes
-spike/scrub.py                deny-by-default structural scrubber
-spike/check_fixture_privacy.py  privacy tripwire (+ --selftest)
-fixtures/jetstream_shapes.jsonl    scrubbed live shapes
-fixtures/jetstream_synthetic.jsonl hand-written malformed + scar fixtures
-fixtures/malformed_lines.txt       non-JSON frames (parse-failure path)
-measurements/                 aggregate-only measurements (no identity)
+src/weatherwatch/
+  classify.py     the identity boundary; pure, finite output alphabet
+  accumulator.py  window assignment, coverage accounting, commit invariant
+  db.py           four tables and the atomic flush
+  health.py       coverage state machine (adapted from driftwatch)
+  collector.py    the asyncio loop, reconnect/replay discipline
+  read.py         query helpers, incl. the "not summable" guard
+  cli.py
+spike/            M0 throwaway probes — do not build on these
+fixtures/         scrubbed structural fixtures + synthetic hostile cases
+measurements/     M0 aggregate measurements
 ```
 
-## Running
+## Tests
 
 ```bash
-python3 spike/check_fixture_privacy.py          # always run this
-python3 spike/m0_probe.py survey --seconds 600
-python3 spike/m0_probe.py cursor --trials 5
-python3 spike/m0_probe.py control
+python3 -m pytest
 ```
 
-Requires `websockets`. No other dependencies.
+Includes end-to-end collector tests against an in-process fake Jetstream that
+reproduces the inclusive-cursor semantics M0 measured, so `cursor + 1` is
+exercised rather than assumed.
