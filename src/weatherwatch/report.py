@@ -265,9 +265,14 @@ def _section_status(runs, health_points, latest) -> str:
     lag_vals = [p.lag_ewma_s for p in health_points if p.lag_ewma_s is not None]
     lag_max = [p.lag_max_s for p in health_points if p.lag_max_s is not None]
     obs_s = sum(p.observed_seconds for p in health_points if p.observed)
-    nominal = sum(p.bucket_width for p in health_points)
     first = min((p.bucket_start for p in health_points), default=None)
     last = max((p.bucket_start + p.bucket_width for p in health_points), default=None)
+    # Denominator is the SPAN of the reported interval, not the sum of window
+    # widths. Consecutive runs can each hold a partial piece of the same
+    # wall-clock minute (a clean shutdown commits a partial window; the next
+    # run recounts the remainder under its own run_id), so summing widths
+    # would count that minute twice and quietly overstate the interval.
+    nominal = (last - first) if (first is not None and last is not None) else 0
 
     counts: dict[str, int] = {}
     for p in health_points:
@@ -484,7 +489,19 @@ observation.
 
 def _summary_json(runs, latest, series_map, totals_series, health_points,
                   generated_at) -> dict:
+    first = min((p.bucket_start for p in health_points), default=None)
+    last = max((p.bucket_start + p.bucket_width for p in health_points),
+               default=None)
+    span_s = (last - first) if (first is not None and last is not None) else 0
+    observed_s = sum(p.observed_seconds for p in health_points if p.observed)
     return {
+        "interval": {
+            "first_bucket_start": first,
+            "last_bucket_end": last,
+            "span_seconds": span_s,
+            "observed_seconds": observed_s,
+            "coverage_ratio": (observed_s / span_s) if span_s else None,
+        },
         "generated_at": generated_at,
         "collector_version": COLLECTOR_VERSION,
         "claim": ("Aggregate activity observed from this Jetstream source "

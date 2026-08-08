@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 from weatherwatch import db, report
-from tests.conftest import SYNTH_ENDPOINT, build_run
+from tests.conftest import SYNTH_BASE, SYNTH_ENDPOINT, build_run
 
 FULL = {"post.create": 120, "post.create.reply": 60, "post.create.quote": 10,
         "repost.create": 40, "like.create": 700, "follow.create": 30,
@@ -229,3 +229,40 @@ def test_live_report_has_no_identity(tmp_path):
         text = (out / name).read_text()
         for label, pat in IDENTITY_PATTERNS.items():
             assert not re.search(pat, text, re.I), f"{label} leaked into {name}"
+
+
+def test_coverage_denominator_uses_span_not_summed_window_widths(conn, tmp_path):
+    """Consecutive runs can each hold part of the same wall-clock minute: a
+    clean shutdown commits a partial window and the next run recounts the
+    remainder under its own run_id. Summing nominal widths would count that
+    minute twice and overstate the interval."""
+    build_run(conn, "r1", [
+        {"metrics": dict(FULL)},
+        {"metrics": dict(FULL), "observed_us": 20_000_000},   # partial tail
+    ], start_index=0, started_at="2026-01-01T00:00:00+00:00",
+        ended_at="2026-01-01T00:02:00+00:00")
+    build_run(conn, "r2", [
+        {"metrics": dict(FULL), "observed_us": 40_000_000},   # same minute
+    ], start_index=1, started_at="2026-01-01T00:02:00+00:00",
+        ended_at="2026-01-01T00:03:00+00:00")
+
+    # Realistic event bounds: r1 stopped 20s into minute 1 and committed a
+    # partial window; r2 resumed at cursor+1 and covered the remaining 40s.
+    # The two runs abut exactly rather than overlapping.
+    mid = (SYNTH_BASE + 80) * 1_000_000
+    db.end_run(conn, "r1", "2026-01-01T00:02:00+00:00", "duration_reached",
+               SYNTH_BASE * 1_000_000, mid)
+    db.end_run(conn, "r2", "2026-01-01T00:03:00+00:00", "duration_reached",
+               mid, (SYNTH_BASE + 120) * 1_000_000)
+
+    out = tmp_path / "beef"
+    report.generate_report(conn, out, run_ids=["r1", "r2"])
+    summary = json.loads((out / "summary.json").read_text())
+    interval = summary["interval"]
+
+    assert len(summary["windows"]) == 3, "three health rows across two runs"
+    assert interval["span_seconds"] == 120, "but only two minutes of wall time"
+    assert interval["observed_seconds"] == pytest.approx(120.0)
+    assert interval["coverage_ratio"] == pytest.approx(1.0), (
+        "the shared minute is fully observed between the two runs"
+    )
