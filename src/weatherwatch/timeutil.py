@@ -45,6 +45,16 @@ def bucket_start_for(time_us: int, width_s: int) -> int:
     return (int(time_us) // 1_000_000 // width_s) * width_s
 
 
+def to_epoch(iso: str | None) -> float | None:
+    """Parse an ISO8601 stamp we wrote ourselves back to unix seconds."""
+    if not iso:
+        return None
+    try:
+        return datetime.datetime.fromisoformat(iso).timestamp()
+    except ValueError:
+        return None
+
+
 def parse_duration(text: str) -> float:
     """Parse '30m', '1h', '600s', '90' (bare = seconds) into seconds."""
     t = text.strip().lower()

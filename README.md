@@ -7,9 +7,10 @@ keeps no people.
 Design candidate: `../CANDIDATE-AGGREGATE-WEATHER-TELEMETRY.md`.
 Measured protocol behaviour: [`M0-VERIFICATION-RESULTS.md`](M0-VERIFICATION-RESULTS.md).
 
-**Status: M0–M4 implemented. Local instrument, not a service.** There is no
+**Status: M0–M7 implemented. Local instrument, not a service.** There is no
 HTTP server, no public endpoint, no API, and nothing here is deployed or
-announced. Run it from a terminal against a local SQLite file.
+announced. Run it from a terminal against a local SQLite file; the dashboard
+is static HTML generated into a directory.
 
 ## What it does
 
@@ -80,9 +81,18 @@ pip install -e .
 weatherwatch collect                       # unbounded, Ctrl-C to stop
 weatherwatch collect --duration 30m
 weatherwatch collect --endpoint jetstream2.us-east --duration 1h
-weatherwatch runs                          # list observation runs
-weatherwatch show <run_id>                 # per-run totals and coverage
+
+weatherwatch runs                          # observation runs and coverage
+weatherwatch stats                         # metric totals and rates
+weatherwatch series post.create            # per-window, with conditioning
+weatherwatch ratios                        # reply/post, block/follow, ...
+weatherwatch correlate post.create.quote block.create
+weatherwatch report --output ./beef        # static dashboard
 ```
+
+Read commands default to the most recent *compatible* sequence of runs on one
+endpoint. Asking for an incompatible combination fails loudly rather than
+producing a number that describes no actual observation.
 
 Default endpoint is `jetstream1.us-east` — the higher-volume endpoint M0
 measured. Configurable, and the choice is recorded on every run.
@@ -98,7 +108,10 @@ src/weatherwatch/
   db.py           four tables and the atomic flush
   health.py       coverage state machine (adapted from driftwatch)
   collector.py    the asyncio loop, reconnect/replay discipline
-  read.py         query helpers, incl. the "not summable" guard
+  read.py         the "not summable" guard
+  query.py        read side: series, run summaries, conditioning flags
+  derive.py       read-time ratios, rolling baselines, z-scores, correlation
+  report.py       static dashboard generation (atomic directory swap)
   cli.py
 spike/            M0 throwaway probes — do not build on these
 fixtures/         scrubbed structural fixtures + synthetic hostile cases
@@ -114,3 +127,30 @@ python3 -m pytest
 Includes end-to-end collector tests against an in-process fake Jetstream that
 reproduces the inclusive-cursor semantics M0 measured, so `cursor + 1` is
 exercised rather than assumed.
+
+## Conditioning
+
+Every rate divides by *observed* duration, never nominal window width. Every
+series distinguishes three states that are easy to confuse and expensive to
+confuse:
+
+| | |
+|---|---|
+| `count = 0` | observed, genuinely no activity |
+| `count = None` | **unobserved** — nobody was watching |
+| `quality != clean` | observed but conditioned: partial, gap, loss, degraded |
+
+Nothing is interpolated across unobserved time, and no baseline learns from a
+window with a measured completeness defect. Latency is tracked separately from
+coverage: a collector replaying backlog is far behind real time while missing
+nothing, and its counts stay usable.
+
+Derived conditions (`quiet` / `normal` / `elevated` / `surging` / `degrading`)
+are threshold cuts on a z-score against a short trailing baseline of the same
+stream. They are not calibrated against anything and carry no statistical
+warrant. There is no Global Beef Index; the dashboard shows a placeholder
+marked *calibration pending*.
+
+## Deployment
+
+None. See `deploy/README.md` for a written proposal that has not been applied.
