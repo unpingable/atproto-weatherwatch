@@ -1,0 +1,45 @@
+{
+  "_note": "Aggregate post counts over one concurrent window. Equal counts are consistent with, but do not prove, identical event sets; set equality would require retaining per-event identity, which this project refuses.",
+  "cross_instance_ratio_j1east_over_j2east": 1.611,
+  "cross_instance_ratio_j1west_over_j2east": 1.575,
+  "legs": {
+    "jetstream1.us-east": {
+      "collections": {
+        "app.bsky.feed.post": 7088
+      },
+      "eps": 59.7,
+      "seconds": 120.0,
+      "span_us": 119967024,
+      "total": 7169
+    },
+    "jetstream1.us-west": {
+      "collections": {
+        "app.bsky.feed.post": 6928
+      },
+      "eps": 58.3,
+      "seconds": 120.0,
+      "span_us": 120003158,
+      "total": 6996
+    },
+    "jetstream2.us-east#A": {
+      "collections": {
+        "app.bsky.feed.post": 4400
+      },
+      "eps": 37.3,
+      "seconds": 120.0,
+      "span_us": 119971796,
+      "total": 4476
+    },
+    "jetstream2.us-east#B": {
+      "collections": {
+        "app.bsky.feed.post": 4400
+      },
+      "eps": 37.3,
+      "seconds": 120.0,
+      "span_us": 119971796,
+      "total": 4476
+    }
+  },
+  "same_instance_ratio_A_over_B": 1.0,
+  "seconds": 120.0
+}

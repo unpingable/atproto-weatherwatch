@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+.venv/
+data/
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+
+# Raw Jetstream capture must never land on disk. Listed defensively: nothing
+# in this repo is permitted to write raw, identity-bearing events at all.
+*.raw.jsonl
+raw/

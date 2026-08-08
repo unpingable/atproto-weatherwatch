@@ -1,0 +1,11 @@
+{
+  "close_code": null,
+  "close_reason": null,
+  "closed_during_stall": false,
+  "initial_lag_s": 0.02,
+  "initial_read_ok": true,
+  "interpretation": "backpressure_buffered_consumer_falls_behind",
+  "post_stall_lag_s": 75.09,
+  "read_after_stall": "ok",
+  "stall_s": 75.0
+}

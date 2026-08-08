@@ -1,0 +1,127 @@
+[control] filtered vs unfiltered...
+[control] retention horizon...
+[retention] 1m: {'lookback': '1m', 'lookback_s': 60, 'first_event_minus_requested_s': 0.0, 'first_event_behind_now_s': 60.0, 'served_from_past': True}
+[retention] 10m: {'lookback': '10m', 'lookback_s': 600, 'first_event_minus_requested_s': 0.0, 'first_event_behind_now_s': 600.0, 'served_from_past': True}
+[retention] 1h: {'lookback': '1h', 'lookback_s': 3600, 'first_event_minus_requested_s': 0.0, 'first_event_behind_now_s': 3600.0, 'served_from_past': True}
+[retention] 6h: {'lookback': '6h', 'lookback_s': 21600, 'error': 'TimeoutError: '}
+[retention] 24h: {'lookback': '24h', 'lookback_s': 86400, 'error': 'TimeoutError: '}
+[retention] 72h: {'lookback': '72h', 'lookback_s': 259200, 'error': 'TimeoutError: '}
+[control] cross-instance...
+[control] slow consumer...
+{
+  "filtered_vs_unfiltered": {
+    "filtered_post_count": 1623,
+    "filtered_post_only": {
+      "collections": {
+        "app.bsky.feed.post": 1623
+      },
+      "eps": 36.6,
+      "seconds": 45.0,
+      "span_us": 45003280,
+      "total": 1649
+    },
+    "post_count_ratio_unfiltered_over_filtered": 0.999,
+    "unfiltered": {
+      "collections": {
+        "ai.afrilingua.feed.content": 32,
+        "app.bsky.actor.profile": 49,
+        "app.bsky.actor.status": 14,
+        "app.bsky.feed.like": 9017,
+        "app.bsky.feed.post": 1621,
+        "app.bsky.feed.postgate": 58,
+        "app.bsky.feed.repost": 1339,
+        "app.bsky.feed.threadgate": 95,
+        "app.bsky.graph.block": 109,
+        "app.bsky.graph.follow": 1156,
+        "app.bsky.graph.listitem": 22,
+        "at.podping.records.podping": 8,
+        "dev.sensorthings.observationBatch": 8,
+        "fm.teal.alpha.feed.play": 112,
+        "is.currents.feed.save": 16
+      },
+      "eps": 304.9,
+      "seconds": 45.0,
+      "span_us": 44998586,
+      "total": 13720
+    },
+    "unfiltered_distinct_collections": 15,
+    "unfiltered_post_count": 1621
+  },
+  "instances": {
+    "_max_pairwise_ratio": 1.29,
+    "_note": "Aggregate counts only. Equal counts are consistent with, but do not prove, identical event sets. Set comparison would require retaining per-event identity, which this project refuses.",
+    "jetstream1.us-east": {
+      "collections": {
+        "app.bsky.feed.post": 2166
+      },
+      "eps": 48.4,
+      "seconds": 45.0,
+      "span_us": 44969267,
+      "total": 2178
+    },
+    "jetstream1.us-west": {
+      "collections": {
+        "app.bsky.feed.post": 2176
+      },
+      "eps": 48.6,
+      "seconds": 45.0,
+      "span_us": 44939701,
+      "total": 2187
+    },
+    "jetstream2.us-east": {
+      "collections": {
+        "app.bsky.feed.post": 1673
+      },
+      "eps": 37.7,
+      "seconds": 45.0,
+      "span_us": 45025231,
+      "total": 1696
+    }
+  },
+  "retention_horizon": [
+    {
+      "first_event_behind_now_s": 60.0,
+      "first_event_minus_requested_s": 0.0,
+      "lookback": "1m",
+      "lookback_s": 60,
+      "served_from_past": true
+    },
+    {
+      "first_event_behind_now_s": 600.0,
+      "first_event_minus_requested_s": 0.0,
+      "lookback": "10m",
+      "lookback_s": 600,
+      "served_from_past": true
+    },
+    {
+      "first_event_behind_now_s": 3600.0,
+      "first_event_minus_requested_s": 0.0,
+      "lookback": "1h",
+      "lookback_s": 3600,
+      "served_from_past": true
+    },
+    {
+      "error": "TimeoutError: ",
+      "lookback": "6h",
+      "lookback_s": 21600
+    },
+    {
+      "error": "TimeoutError: ",
+      "lookback": "24h",
+      "lookback_s": 86400
+    },
+    {
+      "error": "TimeoutError: ",
+      "lookback": "72h",
+      "lookback_s": 259200
+    }
+  ],
+  "slow_consumer": {
+    "close_code": null,
+    "close_reason": null,
+    "closed_during_stall": false,
+    "initial_read_ok": true,
+    "read_after_stall": "ok",
+    "stall_s": 75.0
+  }
+}

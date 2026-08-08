@@ -1,0 +1,11 @@
+# Non-JSON / malformed frames. One per line, read as raw text, NOT as JSONL.
+# Exercises the parse-failure counter. Blank lines and lines starting with '#'
+# are comments and are skipped by readers.
+not json at all
+{"unterminated": "object"
+[]
+"a bare json string"
+12345
+null
+{"kind": "commit", "commit": {"collection": "app.bsky.feed.post",}}
+{'kind': 'commit'}

@@ -1,0 +1,58 @@
+{
+  "consensus": "exact_no_overlap_no_gap",
+  "question": "with cursor=T inclusive, does cursor=T+1 resume exactly?",
+  "trials": [
+    {
+      "first_resumed_equals_in_stream_next": true,
+      "first_resumed_minus_T_us": 37473,
+      "in_stream_next_minus_T_us": 37473,
+      "pivot_replayed": false,
+      "trial": 0,
+      "verdict": "exact_no_overlap_no_gap"
+    },
+    {
+      "first_resumed_equals_in_stream_next": true,
+      "first_resumed_minus_T_us": 74144,
+      "in_stream_next_minus_T_us": 74144,
+      "pivot_replayed": false,
+      "trial": 1,
+      "verdict": "exact_no_overlap_no_gap"
+    },
+    {
+      "first_resumed_equals_in_stream_next": true,
+      "first_resumed_minus_T_us": 26577,
+      "in_stream_next_minus_T_us": 26577,
+      "pivot_replayed": false,
+      "trial": 2,
+      "verdict": "exact_no_overlap_no_gap"
+    },
+    {
+      "first_resumed_equals_in_stream_next": true,
+      "first_resumed_minus_T_us": 4793,
+      "in_stream_next_minus_T_us": 4793,
+      "pivot_replayed": false,
+      "trial": 3,
+      "verdict": "exact_no_overlap_no_gap"
+    },
+    {
+      "first_resumed_equals_in_stream_next": true,
+      "first_resumed_minus_T_us": 167251,
+      "in_stream_next_minus_T_us": 167251,
+      "pivot_replayed": false,
+      "trial": 4,
+      "verdict": "exact_no_overlap_no_gap"
+    },
+    {
+      "first_resumed_equals_in_stream_next": true,
+      "first_resumed_minus_T_us": 36776,
+      "in_stream_next_minus_T_us": 36776,
+      "pivot_replayed": false,
+      "trial": 5,
+      "verdict": "exact_no_overlap_no_gap"
+    }
+  ],
+  "unanimous": true,
+  "verdict_counts": {
+    "exact_no_overlap_no_gap": 6
+  }
+}
