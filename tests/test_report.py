@@ -553,3 +553,107 @@ def test_card_help_text_claims_nothing_about_relationships(report_db, tmp_path):
     for forbidden in ("unfollowed", "stopped blocking", "reconciled",
                       "relationship ended"):
         assert forbidden not in html_doc.lower()
+
+
+# --- deployment unit files (static inspection, no systemd needed) ----------
+
+UNIT_DIR = Path(__file__).resolve().parents[1] / "deploy" / "systemd"
+
+
+def _unit(name: str) -> str:
+    return (UNIT_DIR / name).read_text()
+
+
+def _directives(text: str) -> dict[str, list[str]]:
+    out: dict[str, list[str]] = {}
+    joined, buf = [], ""
+    for line in text.splitlines():
+        if line.rstrip().endswith("\\"):
+            buf += line.rstrip()[:-1].strip() + " "
+            continue
+        joined.append(buf + line.strip()); buf = ""
+    for line in joined:
+        if "=" in line and not line.startswith(("#", "[")):
+            k, v = line.split("=", 1)
+            out.setdefault(k.strip(), []).append(v.strip())
+    return out
+
+
+def test_collector_unit_runs_the_installed_collector_unbounded():
+    d = _directives(_unit("weatherwatch-collector.service"))
+    exec_start = d["ExecStart"][0]
+    assert exec_start.startswith("/opt/weatherwatch/.venv/bin/python")
+    assert "-m weatherwatch.cli" in exec_start
+    assert "--db /var/lib/weatherwatch/weatherwatch.sqlite" in exec_start
+    assert "collect" in exec_start
+    assert "--duration" not in exec_start, "continuous means run until stopped"
+
+
+def test_collector_unit_uses_the_repo_endpoint():
+    from weatherwatch.collector import DEFAULT_ENDPOINT
+    exec_start = _directives(_unit("weatherwatch-collector.service"))["ExecStart"][0]
+    assert f"--endpoint {DEFAULT_ENDPOINT}" in exec_start, (
+        "the unit must pin the exact tested endpoint, not a guessed URL"
+    )
+
+
+def test_collector_restart_policy_cannot_storm():
+    d = _directives(_unit("weatherwatch-collector.service"))
+    assert d["Restart"] == ["on-failure"]
+    assert int(d["RestartSec"][0]) >= 10, "a tight restart loop is a storm"
+    assert d["KillSignal"] == ["SIGTERM"], "graceful shutdown flushes the window"
+    assert int(d["TimeoutStopSec"][0]) >= 30
+    assert "StartLimitBurst" in d
+
+
+def test_publisher_is_a_oneshot_that_calls_the_tested_script():
+    d = _directives(_unit("weatherwatch-publish.service"))
+    assert d["Type"] == ["oneshot"]
+    assert d["ExecStart"] == ["/opt/weatherwatch/deploy/publish.sh"], (
+        "publication logic must not be reimplemented in the unit"
+    )
+    env = " ".join(d["Environment"])
+    assert "WW_MODE=local" in env
+    assert "WW_DB=/var/lib/weatherwatch/weatherwatch.sqlite" in env
+    assert "WW_TARGET=/var/www/weatherwatch-beef" in env
+
+
+def test_neither_unit_couples_to_the_other():
+    """The boundary is load-bearing: each must work with the other stopped."""
+    for name in ("weatherwatch-collector.service", "weatherwatch-publish.service"):
+        text = _unit(name)
+        for directive in ("After=", "Requires=", "Wants=", "BindsTo=", "PartOf="):
+            for line in text.splitlines():
+                if line.startswith(directive):
+                    assert "weatherwatch" not in line, f"{name}: {line}"
+
+
+def test_units_do_not_run_as_root_and_stay_confined():
+    for name in ("weatherwatch-collector.service", "weatherwatch-publish.service"):
+        d = _directives(_unit(name))
+        assert d["User"] == ["weatherwatch"], f"{name} must not run as root"
+        assert d["NoNewPrivileges"] == ["true"]
+        assert d["ProtectSystem"] == ["strict"]
+        assert d["ProtectHome"] == ["true"]
+        assert d["CapabilityBoundingSet"] == [""]
+    # only the publisher may reach the webroot, and only via a per-unit group
+    coll = _directives(_unit("weatherwatch-collector.service"))
+    pub = _directives(_unit("weatherwatch-publish.service"))
+    assert coll["ReadWritePaths"] == ["/var/lib/weatherwatch"]
+    assert "/var/www" in pub["ReadWritePaths"][0]
+    assert "SupplementaryGroups" not in coll
+    assert pub["SupplementaryGroups"] == ["labelwatch"]
+
+
+def test_timer_publishes_every_five_minutes_without_catchup():
+    d = _directives(_unit("weatherwatch-publish.timer"))
+    assert d["OnUnitActiveSec"] == ["5min"]
+    assert d["OnBootSec"] == ["2min"]
+    assert d["Unit"] == ["weatherwatch-publish.service"]
+    assert "Persistent" not in d, (
+        "a missed static-report refresh is not data loss; OnBootSec covers it"
+    )
+    assert "[Install]" in _unit("weatherwatch-publish.timer")
+    assert "[Install]" not in _unit("weatherwatch-publish.service"), (
+        "the oneshot must be timer-driven, never enabled as a service"
+    )

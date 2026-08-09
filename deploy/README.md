@@ -111,6 +111,127 @@ and the gap is recorded here instead. A graceful `caddy reload` is a config
 swap with no connection drop, and Labelwatch's own witness requirements
 already class config reloads as routine disturbances.
 
+
+## Runtime (systemd, on the serving host)
+
+Continuous collection is a **deployment choice, not a semantic requirement**.
+The data model is an observation instrument: bounded sessions are exactly as
+correct, and `weatherwatch collect --duration 30m` remains valid. Running
+continuously simply keeps rolling baselines contiguous and keeps cursor replay
+as recovery machinery rather than normal operation.
+
+| | |
+|---|---|
+| Collector unit | `weatherwatch-collector.service` |
+| Publisher unit | `weatherwatch-publish.service` (`Type=oneshot`) |
+| Timer | `weatherwatch-publish.timer` — 5 min, `OnBootSec=2min` |
+| Service user | `weatherwatch` (system, nologin, uid 997) |
+| Code | `/opt/weatherwatch` (venv at `.venv`, Python 3.10) |
+| Database | `/var/lib/weatherwatch/weatherwatch.sqlite` |
+| Static output | `/var/www/weatherwatch-beef/` |
+| Source endpoint | `wss://jetstream1.us-east.bsky.network/subscribe` |
+
+Exact commands:
+
+```
+collector  /opt/weatherwatch/.venv/bin/python -m weatherwatch.cli \
+             --db /var/lib/weatherwatch/weatherwatch.sqlite \
+             collect --endpoint wss://jetstream1.us-east.bsky.network/subscribe
+publisher  /opt/weatherwatch/deploy/publish.sh      (WW_MODE=local)
+```
+
+The endpoint is written out in full in the unit and must match
+`weatherwatch.collector.DEFAULT_ENDPOINT`. Changing it creates a hard
+observation seam by design — a new run, a new cursor namespace, never a silent
+continuation.
+
+### Operating
+
+```bash
+systemctl status weatherwatch-collector
+journalctl -u weatherwatch-collector -f          # STATS lines, one per window
+journalctl -u weatherwatch-publish -n 50         # publication failures
+systemctl restart weatherwatch-collector         # resumes at committed cursor+1
+systemctl list-timers weatherwatch-publish.timer
+systemctl start weatherwatch-publish.service     # publish now, out of band
+```
+
+Manual publish from a workstation still works (`./deploy/publish.sh`, remote
+mode) but will overwrite the host-generated report with whatever the *local*
+database holds. With the timer running, prefer `systemctl start
+weatherwatch-publish.service` on the host.
+
+### Measured on this host (2026-08-09, steady state)
+
+| | |
+|---|---|
+| CPU | 5.7% of one core (60s sample, ~270 eps) |
+| RSS | ~76 MB |
+| Stream lag | 0.010s |
+| Database | 2.2 MB after ~4h of aggregate history |
+| Publication | ~0.2s per run, every 5 min |
+
+RSS sits above the ~30–35 MB seen in bounded runs because a long backlog
+replay retains allocator arenas; it is stable and far under `MemoryHigh=512M`.
+During replay CPU runs near the `CPUQuota=50%` ceiling, which throttles
+catch-up slightly — deliberate, and catch-up still completes (a 4.4h backlog
+drained in roughly 12 minutes).
+
+### Separation
+
+The collector and publisher share nothing but the SQLite file, and neither
+unit references the other — no `After=`, no `Requires=`. Verified: stopping
+the timer leaves collection running; stopping the collector still lets the
+publisher regenerate and `/beef` keeps serving the last report.
+
+### Privileges
+
+The collector holds only `ReadWritePaths=/var/lib/weatherwatch`. The publisher
+additionally gets `ReadWritePaths=/var/www` and `SupplementaryGroups=labelwatch`
+— a **per-unit** grant so the atomic directory swap can stage a sibling in
+`/var/www`. That group is not held by the collector and no global group
+membership was changed. `/var/www/weatherwatch-beef` is owned by
+`weatherwatch`; no Labelwatch path was chowned or chmodded.
+
+### Disable / rollback
+
+```bash
+systemctl disable --now weatherwatch-publish.timer
+systemctl disable --now weatherwatch-collector.service
+rm /etc/systemd/system/weatherwatch-{collector.service,publish.service,publish.timer}
+systemctl daemon-reload
+```
+
+The database, the published report and the Caddy route are all untouched by
+that: `/beef` keeps serving the last published state. Removing the route is a
+separate step (see the Caddy section above).
+
+### Cursor-horizon failure posture
+
+On restart the collector resumes at `persisted_cursor + 1` on the *same*
+endpoint. If the relay no longer holds that cursor it will **not** jump to
+live head pretending continuity: the first event after resume is compared
+against the requested cursor, and a shortfall beyond 2s is recorded as
+`gap_us` with `resume_seam=1` on that window. The window becomes
+baseline-ineligible, the gap is drawn on the health strip, the previous runs
+are preserved untouched, and the new process is a new run either way — restart
+always creates a run boundary, never a silent continuation.
+
+Measured 2026-08-09: a **4.41 h** cursor replayed instantly on
+jetstream1.us-east, which extends M0's verified horizon (M0 confirmed 1 h and
+saw ≥6 h time out within a 30 s probe). The horizon beyond that remains
+unresolved.
+
+**Known gap, not yet handled:** if the relay accepts the connection but never
+delivers events for an unhonourable cursor — the shape M0 saw at ≥6 h — the
+collector sits connected and silent. It would not corrupt anything (no window
+opens, no cursor moves, nothing is falsely recorded), but it also would not
+self-recover, and `systemctl status` would read *active*. There is no CLI flag
+today to start a fresh observation without hand-editing the `meta` cursor row.
+Watch for it as `journalctl -u weatherwatch-collector` going quiet with no
+STATS lines. Adding an explicit opt-in path is deliberately left for a future
+campaign rather than improvised here.
+
 ## Publishing
 
 ```bash
