@@ -374,3 +374,182 @@ def test_condition_badges_stay_non_authoritative(report_db, tmp_path):
     assert re.search(r"\.pill\s*\{[^}]*border:1px solid currentColor", html)
     assert "not calibrated" in html
     assert "z-score" in html
+
+
+# --- the three added primitive cards ---------------------------------------
+
+CARD_METRICS = {
+    "Unblocks": ("block.delete",),
+    "Repost deletes": ("repost.delete",),
+    "List mutations": ("listitem.create", "listitem.delete"),
+}
+
+
+def _card_labels(html_doc: str) -> list[str]:
+    section = html_doc[html_doc.index("B · Activity weather"):
+                       html_doc.index("C · Derived conditions")]
+    return re.findall(r'class="metric-name"[^>]*>([^<]+)<', section)
+
+
+def _card_total(html_doc: str, label: str) -> int:
+    section = html_doc[html_doc.index(label):]
+    return int(re.search(r"· ([0-9,]+) total", section).group(1).replace(",", ""))
+
+
+def test_new_cards_read_the_expected_persisted_keys():
+    """These must come from keys the classifier already emits — no new
+    collection semantics, no invented metric."""
+    from weatherwatch.classify import ALLOWED_METRICS
+    specs = {label: report._metric_keys((label, m)) for label, m in report.PRIMITIVES}
+    for label, expected in CARD_METRICS.items():
+        assert specs[label] == expected, f"{label} reads {specs[label]}"
+        for key in expected:
+            assert key in ALLOWED_METRICS, f"{key} is not a classifier output"
+
+
+def test_block_delete_maps_to_unblocks(conn, tmp_path):
+    build_run(conn, "r1", [
+        {"metrics": {"block.create": 9, "block.delete": 4}},
+        {"metrics": {"block.create": 7, "block.delete": 3}},
+    ])
+    out = tmp_path / "beef"
+    report.generate_report(conn, out)
+    html_doc = read_html(out)
+    assert "Unblocks" in _card_labels(html_doc)
+    assert _card_total(html_doc, "Unblocks") == 7
+    assert _card_total(html_doc, "Blocks") == 16, "creates must stay separate"
+
+
+def test_repost_delete_is_distinct_from_repost_create(conn, tmp_path):
+    build_run(conn, "r1", [
+        {"metrics": {"repost.create": 100, "repost.delete": 6}},
+        {"metrics": {"repost.create": 80, "repost.delete": 5}},
+    ])
+    out = tmp_path / "beef"
+    report.generate_report(conn, out)
+    html_doc = read_html(out)
+    labels = _card_labels(html_doc)
+    assert "Reposts" in labels and "Repost deletes" in labels
+    assert _card_total(html_doc, "Reposts") == 180
+    assert _card_total(html_doc, "Repost deletes") == 11
+
+
+def test_list_mutations_is_exactly_create_plus_delete(conn, tmp_path):
+    build_run(conn, "r1", [
+        {"metrics": {"listitem.create": 12, "listitem.delete": 5}},
+        {"metrics": {"listitem.create": 3, "listitem.delete": 8}},
+    ])
+    out = tmp_path / "beef"
+    report.generate_report(conn, out)
+    assert _card_total(read_html(out), "List mutations") == 12 + 5 + 3 + 8
+
+    summary = json.loads((out / "summary.json").read_text())
+    # components stay individually available; the sum is presentational only
+    assert summary["metrics"]["listitem.create"]["total"] == 15
+    assert summary["metrics"]["listitem.delete"]["total"] == 13
+    assert "listitem.create+listitem.delete" not in summary["metrics"], (
+        "the composite must not be persisted as its own metric"
+    )
+
+
+def test_list_mutations_with_one_side_absent(conn, tmp_path):
+    """A window with creates but no deletes is a real zero on that side."""
+    build_run(conn, "r1", [
+        {"metrics": {"listitem.create": 6}},
+        {"metrics": {"listitem.delete": 4}},
+    ])
+    out = tmp_path / "beef"
+    report.generate_report(conn, out)
+    assert _card_total(read_html(out), "List mutations") == 10
+
+
+def test_list_mutations_with_no_listitem_activity_at_all(conn, tmp_path):
+    """Zero everywhere must render as zero, not crash and not vanish."""
+    build_run(conn, "r1", [
+        {"metrics": {"post.create": 5}},
+        {"metrics": {"post.create": 5}},
+    ])
+    out = tmp_path / "beef"
+    report.generate_report(conn, out)
+    html_doc = read_html(out)
+    assert "List mutations" in _card_labels(html_doc)
+    assert _card_total(html_doc, "List mutations") == 0
+
+
+def test_sum_series_marks_unobserved_windows(conn):
+    """A hole in either component is a hole in the sum, never a partial
+    total presented as a whole one."""
+    from weatherwatch import query
+    build_run(conn, "r1", [
+        {"metrics": {"listitem.create": 3, "listitem.delete": 1}},
+        None,                                    # UNOBSERVED
+        {"metrics": {"listitem.create": 2, "listitem.delete": 2}},
+    ])
+    a = query.series(conn, ["r1"], "listitem.create")
+    b = query.series(conn, ["r1"], "listitem.delete")
+    combined = query.sum_series([a, b], "listitem.create+listitem.delete")
+    assert [p.count for p in combined.points] == [4, None, 4]
+    assert combined.points[1].quality == "unobserved"
+    assert combined.total == 8
+    assert combined.observed_seconds == 120.0
+
+
+def test_sum_series_refuses_mismatched_runs(conn):
+    from weatherwatch import query
+    build_run(conn, "r1", [{"metrics": {"listitem.create": 1}}], start_index=0,
+              started_at="2026-01-01T00:00:00+00:00",
+              ended_at="2026-01-01T00:01:00+00:00")
+    build_run(conn, "r2", [{"metrics": {"listitem.delete": 1}}], start_index=9,
+              started_at="2026-01-01T00:09:00+00:00",
+              ended_at="2026-01-01T00:10:00+00:00")
+    a = query.series(conn, ["r1"], "listitem.create")
+    b = query.series(conn, ["r2"], "listitem.delete")
+    with pytest.raises(ValueError, match="same runs"):
+        query.sum_series([a, b], "x")
+
+
+def test_activity_weather_has_sixteen_cards(report_db, tmp_path):
+    out = tmp_path / "beef"
+    report.generate_report(report_db, out)
+    labels = _card_labels(read_html(out))
+    assert len(labels) == 16, labels
+    assert len(report.PRIMITIVES) == 16
+
+
+def test_card_order_forms_a_four_by_four(report_db, tmp_path):
+    """Four columns at desktop width, so display order IS the grid layout."""
+    out = tmp_path / "beef"
+    report.generate_report(report_db, out)
+    labels = _card_labels(read_html(out))
+    rows = [labels[i:i + 4] for i in range(0, 16, 4)]
+    assert rows[1][2:] == ["Blocks", "Unblocks"], "unblocks sits beside blocks"
+    assert "Repost deletes" in rows[2], "repost deletes joins the removals row"
+    assert rows[2] == ["Post deletes", "Like deletes", "Repost deletes",
+                       "Follow deletes"]
+    assert rows[3][0] == "List mutations", "graph churn leads the churn row"
+
+
+def test_new_cards_carry_no_identity_and_no_new_visual_treatment(report_db, tmp_path):
+    out = tmp_path / "beef"
+    report.generate_report(report_db, out)
+    html_doc = read_html(out)
+    section = html_doc[html_doc.index("B · Activity weather"):
+                       html_doc.index("C · Derived conditions")]
+    for label, pat in IDENTITY_PATTERNS.items():
+        assert not re.search(pat, section, re.I), f"{label} in activity weather"
+    # every card is the same markup shape: panel + name + val + one sparkline
+    assert section.count('class="panel"') == 16
+    assert section.count('class="metric-val"') == 16
+    assert section.count('class="spark"') == 16
+    assert 'class="metric-unit">/s · ' in section
+
+
+def test_card_help_text_claims_nothing_about_relationships(report_db, tmp_path):
+    out = tmp_path / "beef"
+    report.generate_report(report_db, out)
+    html_doc = read_html(out)
+    assert "membership churn" in html_doc
+    assert "Nothing is inferred about the relationship" in html_doc
+    for forbidden in ("unfollowed", "stopped blocking", "reconciled",
+                      "relationship ended"):
+        assert forbidden not in html_doc.lower()

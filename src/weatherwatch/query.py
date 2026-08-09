@@ -555,6 +555,54 @@ def metric_totals(conn: sqlite3.Connection, run_ids: list[str]) -> dict[str, int
         f"WHERE run_id IN ({ph}) GROUP BY metric ORDER BY total DESC", run_ids)}
 
 
+def sum_series(parts: list[Series], name: str) -> Series:
+    """Add several aligned series together, read-side only.
+
+    For presentation composites like "list mutations = listitem creates +
+    listitem deletes". Nothing is persisted: the underlying keys stay the
+    product data and this sum exists only for the length of a render.
+
+    Alignment is by `bucket_start`, and a window unobserved in ANY component
+    is unobserved in the sum — never a partial total dressed up as a whole
+    one. Components come from the same runs and the same densification, so in
+    practice their window sets are identical; the guard is for the day that
+    stops being true.
+    """
+    if not parts:
+        raise ValueError("no series to sum")
+    first = parts[0]
+    for p in parts[1:]:
+        if p.bucket_width != first.bucket_width:
+            raise ValueError("bucket widths differ")
+        if p.run_ids != first.run_ids:
+            raise ValueError("sum requires series over the same runs")
+
+    maps = [{q.bucket_start: q for q in p.points} for p in parts]
+    points: list[WindowPoint] = []
+    for base in first.points:
+        others = [m.get(base.bucket_start) for m in maps]
+        if any(o is None or not o.observed for o in others) or not base.observed:
+            points.append(WindowPoint(
+                bucket_start=base.bucket_start, bucket_width=base.bucket_width,
+                count=None, events_seen=base.events_seen,
+                observed_duration_us=0,
+                flags=frozenset({FLAG_UNOBSERVED}),
+                coverage_state=FLAG_UNOBSERVED, run_id=base.run_id,
+            ))
+            continue
+        total = sum(o.count or 0 for o in others)
+        points.append(WindowPoint(
+            bucket_start=base.bucket_start, bucket_width=base.bucket_width,
+            count=total, events_seen=base.events_seen,
+            observed_duration_us=base.observed_duration_us,
+            flags=base.flags, coverage_state=base.coverage_state,
+            run_id=base.run_id, gap_us=base.gap_us,
+            lag_ewma_s=base.lag_ewma_s, lag_max_s=base.lag_max_s,
+        ))
+    return Series(name, first.endpoint, first.run_ids, first.bucket_width,
+                  tuple(points))
+
+
 TOTAL_EVENTS_METRIC = "_events_total"
 
 

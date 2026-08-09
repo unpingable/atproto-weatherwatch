@@ -33,22 +33,61 @@ from .query import Series, WindowPoint
 
 # --- what to show ----------------------------------------------------------
 
-#: (label, metric). Order is display order.
-PRIMITIVES: tuple[tuple[str, str], ...] = (
+#: (label, metric-or-metrics). Order is display order; a tuple of metrics is
+#: summed at read time for presentation and is never persisted.
+#:
+#: Laid out to fall as a 4x4 at ordinary desktop width:
+#:   creation      | posts    replies   quotes      reposts
+#:   engagement    | likes    follows   blocks      unblocks
+#:   removals      | post del like del  repost del  follow del
+#:   churn/account | list mut profile   account     identity
+PRIMITIVES: tuple[tuple[str, str | tuple[str, ...]], ...] = (
     ("Posts", "post.create"),
     ("Replies", "post.create.reply"),
     ("Quotes", "post.create.quote"),
     ("Reposts", "repost.create"),
+
     ("Likes", "like.create"),
     ("Follows", "follow.create"),
     ("Blocks", "block.create"),
+    ("Unblocks", "block.delete"),
+
     ("Post deletes", "post.delete"),
     ("Like deletes", "like.delete"),
+    ("Repost deletes", "repost.delete"),
     ("Follow deletes", "follow.delete"),
+
+    ("List mutations", ("listitem.create", "listitem.delete")),
     ("Profile updates", "profile.update"),
     ("Account events", "account.event"),
     ("Identity events", "identity.event"),
 )
+
+#: Optional hover text, for cards whose label is shorter than its meaning.
+#: Descriptive of the observed events only — no relationship state inferred.
+CARD_HELP: dict[str, str] = {
+    "Unblocks": ("app.bsky.graph.block delete events — a block record was "
+                 "removed. Nothing is inferred about the relationship."),
+    "List mutations": ("aggregate list membership churn: app.bsky.graph.listitem "
+                       "creates + deletes. No lists, members or identities."),
+}
+
+
+def _metric_keys(spec) -> tuple[str, ...]:
+    """The persisted key(s) a card reads. Composites list their components."""
+    m = spec[1]
+    return (m,) if isinstance(m, str) else tuple(m)
+
+
+def _card_series(series_map: dict[str, Series], spec) -> Series | None:
+    """Resolve a card spec to a Series, summing components if composite."""
+    keys = _metric_keys(spec)
+    parts = [series_map[k] for k in keys if k in series_map]
+    if len(parts) != len(keys):
+        return None
+    if len(parts) == 1:
+        return parts[0]
+    return query.sum_series(parts, "+".join(keys))
 
 QUALITY_COLORS = {
     "clean": "var(--ok)",
@@ -405,14 +444,17 @@ def _section_status(runs, health_points, latest) -> str:
 
 def _section_weather(series_map: dict[str, Series]) -> str:
     cards = []
-    for label, metric in PRIMITIVES:
-        s = series_map.get(metric)
+    for spec in PRIMITIVES:
+        label = spec[0]
+        s = _card_series(series_map, spec)
         if s is None or not s.observed_points:
             continue
         pts = list(s.points)
+        help_text = CARD_HELP.get(label)
+        title = f' title="{_esc(help_text)}"' if help_text else ""
         cards.append(f"""
 <div class="panel">
-  <div class="metric-name">{_esc(label)}</div>
+  <div class="metric-name"{title}>{_esc(label)}</div>
   <div class="metric-val">{_fmt(s.mean_rate, 2)}
     <span class="metric-unit">/s · {_fmt(s.total, 0)} total</span></div>
   {_sparkline(pts)}
@@ -439,8 +481,9 @@ def _section_conditions(conn, run_ids, series_map, totals_series) -> str:
         )
 
     dep_rows = []
-    for label, metric in PRIMITIVES:
-        s = series_map.get(metric)
+    for spec in PRIMITIVES:
+        label = spec[0]
+        s = _card_series(series_map, spec)
         if s is None or not s.observed_points:
             continue
         deps = derive.rolling_departures(s)
@@ -646,7 +689,7 @@ def generate_report(
     totals_series = query.total_events_series(conn, run_ids)
 
     series_map: dict[str, Series] = {}
-    wanted = {m for _, m in PRIMITIVES}
+    wanted = {k for spec in PRIMITIVES for k in _metric_keys(spec)}
     wanted |= {n for _, n, _ in derive.STANDARD_RATIOS}
     wanted |= {d for _, _, d in derive.STANDARD_RATIOS}
     for metric in sorted(wanted):
