@@ -67,7 +67,15 @@ class FakeJetstream:
         self._release: asyncio.Event | None = None
 
     async def _handler(self, ws, path=None):
-        raw_path = path if path is not None else getattr(ws, "path", "")
+        # The request path moved across websockets releases: 10.x passes it as
+        # a second handler argument / exposes ws.path; 14+ drops both and puts
+        # it on ws.request.path. The collector only uses connect()/recv(),
+        # which are stable — this is purely the fake server keeping up.
+        raw_path = path
+        if raw_path is None:
+            raw_path = getattr(getattr(ws, "request", None), "path", None)
+        if raw_path is None:
+            raw_path = getattr(ws, "path", "") or ""
         query = urllib.parse.urlparse(raw_path).query
         params = urllib.parse.parse_qs(query)
         cursor = int(params["cursor"][0]) if "cursor" in params else None

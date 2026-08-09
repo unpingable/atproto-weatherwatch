@@ -1,0 +1,14 @@
+[Unit]
+Description=Weatherwatch - publish /beef every 5 minutes
+
+[Timer]
+Unit=weatherwatch-publish.service
+OnBootSec=2min
+OnUnitActiveSec=5min
+AccuracySec=30s
+# No Persistent=: a publication missed while the machine was down is not a
+# data-loss event. The report is regenerated from the database, so one run
+# after boot (OnBootSec) is all the catch-up that means anything.
+
+[Install]
+WantedBy=timers.target

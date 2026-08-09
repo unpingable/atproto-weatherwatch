@@ -245,3 +245,4 @@ def test_run_coverage_reports_observed_below_nominal_when_partial(conn):
     cov = read.run_coverage(conn, "r1")
     assert cov["partial_windows"] >= 1
     assert cov["observed_duration_us"] < cov["nominal_duration_us"]
+

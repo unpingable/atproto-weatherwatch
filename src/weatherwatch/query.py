@@ -492,7 +492,7 @@ def series(
 
     observed: dict[int, WindowPoint] = {}
     for r in rows:
-        observed[r["bucket_start"]] = WindowPoint(
+        point = WindowPoint(
             bucket_start=r["bucket_start"],
             bucket_width=r["bucket_width"],
             count=r["count"],
@@ -504,6 +504,10 @@ def series(
             gap_us=r["gap_us"] or 0,
             lag_ewma_s=r["lag_ewma_s"],
             lag_max_s=r["lag_max_s"],
+        )
+        prior = observed.get(point.bucket_start)
+        observed[point.bucket_start] = (
+            _merge_window_parts(prior, point) if prior else point
         )
 
     if not observed:
@@ -553,6 +557,45 @@ def metric_totals(conn: sqlite3.Connection, run_ids: list[str]) -> dict[str, int
     return {r["metric"]: r["total"] for r in conn.execute(
         f"SELECT metric, SUM(count) AS total FROM bucket "
         f"WHERE run_id IN ({ph}) GROUP BY metric ORDER BY total DESC", run_ids)}
+
+
+def _merge_window_parts(a: WindowPoint, b: WindowPoint) -> WindowPoint:
+    """Combine two runs' halves of the SAME wall-clock window.
+
+    A clean shutdown commits its in-flight window as partial; the next run
+    resumes at cursor+1 and covers the remainder under its own run_id. Both
+    rows are real observations of one minute, and `assert_summable` has
+    already established the runs do not overlap — so counts and observed
+    durations add.
+
+    Without this, the later row simply replaced the earlier one in the series
+    and its events vanished. Under continuous collection every restart
+    produces exactly this shape, so it is the normal case.
+    """
+    full = a.bucket_width * 1_000_000
+    observed = a.observed_duration_us + b.observed_duration_us
+    flags = (a.flags | b.flags) - {FLAG_PARTIAL}
+    if observed < full:
+        flags = flags | {FLAG_PARTIAL}
+    states = {a.coverage_state, b.coverage_state}
+    state = ("degraded" if "degraded" in states
+             else "warming_up" if "warming_up" in states
+             else next(iter(states - {"ok"}), "ok"))
+    return WindowPoint(
+        bucket_start=a.bucket_start,
+        bucket_width=a.bucket_width,
+        count=(a.count or 0) + (b.count or 0),
+        events_seen=(a.events_seen or 0) + (b.events_seen or 0),
+        observed_duration_us=min(observed, full),
+        flags=flags,
+        coverage_state=state,
+        run_id=a.run_id,
+        gap_us=a.gap_us + b.gap_us,
+        lag_ewma_s=max([v for v in (a.lag_ewma_s, b.lag_ewma_s) if v is not None],
+                       default=None),
+        lag_max_s=max([v for v in (a.lag_max_s, b.lag_max_s) if v is not None],
+                      default=None),
+    )
 
 
 def sum_series(parts: list[Series], name: str) -> Series:

@@ -1,0 +1,53 @@
+[Unit]
+# Continuous collection is a DEPLOYMENT choice, not a requirement of the data
+# model: the collector is an observation instrument that may run in bounded
+# sessions just as correctly. Running it continuously simply keeps rolling
+# baselines contiguous and keeps replay as recovery machinery rather than
+# normal operation.
+Description=Weatherwatch - ATProto aggregate weather collector
+Documentation=file:/opt/weatherwatch/deploy/README.md
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=weatherwatch
+Group=weatherwatch
+WorkingDirectory=/opt/weatherwatch
+Environment=PYTHONDONTWRITEBYTECODE=1
+# No --duration: run until stopped. The endpoint is written out in full and
+# must match weatherwatch.collector.DEFAULT_ENDPOINT — changing it creates a
+# hard observation seam by design, never a silent continuation.
+ExecStart=/opt/weatherwatch/.venv/bin/python -m weatherwatch.cli \
+    --db /var/lib/weatherwatch/weatherwatch.sqlite \
+    collect --endpoint wss://jetstream1.us-east.bsky.network/subscribe
+
+# systemd owns supervision: no shell loop, no in-process daemonising, no cron.
+Restart=on-failure
+RestartSec=15
+# SIGTERM is handled: the collector closes its in-flight window as partial,
+# flushes, and ends the run cleanly rather than losing it.
+KillSignal=SIGTERM
+TimeoutStopSec=45
+
+MemoryHigh=512M
+MemoryMax=1G
+CPUQuota=50%
+# NB: no OOMPolicy= — this host's systemd (v249) silently ignores it, and a
+# directive that implies protection it does not provide is worse than none.
+# Restart=on-failure already covers an OOM kill.
+
+ProtectSystem=strict
+ReadWritePaths=/var/lib/weatherwatch
+ProtectHome=true
+PrivateTmp=true
+NoNewPrivileges=true
+CapabilityBoundingSet=
+RestrictSUIDSGID=true
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

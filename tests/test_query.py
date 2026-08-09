@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from weatherwatch import query, read
-from tests.conftest import SYNTH_BASE, SYNTH_WIDTH, build_run
+from weatherwatch import db, query, read
+from tests.conftest import SYNTH_BASE, SYNTH_WIDTH, build_run, build_window
 
 EP_A = "wss://relay-a.invalid/subscribe"
 EP_B = "wss://relay-b.invalid/subscribe"
@@ -258,3 +258,52 @@ def test_densify_does_not_invent_unobserved_time_outside_the_span(conn):
     assert [p.observed for p in s.points] == [True, False, True]
     assert s.points[0].bucket_start == SYNTH_BASE
     assert s.points[-1].bucket_start == SYNTH_BASE + 2 * SYNTH_WIDTH
+
+
+# --- open runs under continuous collection ---------------------------------
+
+def test_open_run_does_not_falsely_overlap_the_run_it_resumed_from(conn):
+    """Under continuous collection the newest run is always open, so its span
+    must come from observed events, not window boundaries. A window starts
+    before its first event; rounding down to the boundary makes a cleanly
+    resumed run look like it overlaps its predecessor, which then refuses to
+    sum a perfectly sequential chain and collapses the dashboard to one run."""
+    build_run(conn, "r1", [w(10), w(20)], start_index=0,
+              started_at="2026-01-01T00:00:00+00:00",
+              ended_at="2026-01-01T00:02:00+00:00")
+    # r1 stopped mid-window, 30s into window 1.
+    db.end_run(conn, "r1", "2026-01-01T00:02:00+00:00", "signal_sigterm",
+               int((SYNTH_BASE + 1) * 1e6),
+               int((SYNTH_BASE + SYNTH_WIDTH + 30) * 1e6))
+
+    # r2 resumed at cursor+1; its first event is in the SAME window but
+    # strictly after r1's last event. It is still running, so it has no
+    # first/last_event_us of its own.
+    db.start_run(conn, "r2", EP_A, "test", SYNTH_WIDTH,
+                 "2026-01-01T00:02:00+00:00", None,
+                 int((SYNTH_BASE + SYNTH_WIDTH + 30) * 1e6))
+    build_window(conn, "r2", 1, {"post.create": 5}, observed_us=29_000_000)
+    conn.execute(
+        "UPDATE window_health SET observed_from_us=?, observed_to_us=? "
+        "WHERE run_id='r2'",
+        (int((SYNTH_BASE + SYNTH_WIDTH + 31) * 1e6),
+         int((SYNTH_BASE + 2 * SYNTH_WIDTH) * 1e6)),
+    )
+    assert query.run_summary(conn, "r2").status == query.RUN_OPEN
+
+    read.assert_summable(conn, ["r1", "r2"])            # must not raise
+    assert query.compatible_runs(conn, EP_A) == ["r1", "r2"]
+    assert query.series(conn, ["r1", "r2"], "post.create").total == 35
+
+
+def test_open_run_still_refuses_a_genuine_overlap(conn):
+    """The fix must not become permissive: real double observation still
+    refuses to sum."""
+    build_run(conn, "r1", [w(10), w(10), w(10)], start_index=0,
+              started_at="2026-01-01T00:00:00+00:00",
+              ended_at="2026-01-01T00:03:00+00:00")
+    db.start_run(conn, "r2", EP_A, "test", SYNTH_WIDTH,
+                 "2026-01-01T00:01:00+00:00", None, None)
+    build_window(conn, "r2", 1, {"post.create": 5})   # same window as r1's 2nd
+    with pytest.raises(read.NotSummable, match="overlapping"):
+        read.assert_summable(conn, ["r1", "r2"])

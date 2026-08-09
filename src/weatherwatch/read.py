@@ -35,16 +35,24 @@ def _run_spans(conn: sqlite3.Connection, run_ids: list[str]) -> list[RunSpan]:
         ).fetchone()
         if row is None:
             raise NotSummable(f"unknown run {rid!r}")
-        # Fall back to window coverage when a run recorded no events.
+        # first/last_event_us are stamped when a run ENDS, so a run that is
+        # still open has neither. Fall back to the per-window event bounds
+        # rather than to window boundaries: a window starts before its first
+        # event, and rounding down to the boundary makes an open run appear to
+        # overlap the run it cleanly resumed from — which then refuses to sum a
+        # perfectly sequential chain. Under continuous collection the newest
+        # run is always open, so this is the normal case, not an edge one.
         lo, hi = row["first_event_us"], row["last_event_us"]
         if lo is None or hi is None:
             b = conn.execute(
-                "SELECT MIN(bucket_start) lo, MAX(bucket_start + bucket_width) hi "
+                "SELECT MIN(COALESCE(observed_from_us, bucket_start * 1000000)) lo, "
+                "       MAX(COALESCE(observed_to_us, "
+                "                    (bucket_start + bucket_width) * 1000000)) hi "
                 "FROM window_health WHERE run_id=?", (rid,)
             ).fetchone()
             if b and b["lo"] is not None:
-                lo = lo if lo is not None else b["lo"] * 1_000_000
-                hi = hi if hi is not None else b["hi"] * 1_000_000
+                lo = lo if lo is not None else b["lo"]
+                hi = hi if hi is not None else b["hi"]
         spans.append(RunSpan(row["run_id"], row["source_endpoint"], lo, hi))
     return spans
 

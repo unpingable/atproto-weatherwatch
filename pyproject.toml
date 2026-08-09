@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "weatherwatch"
 version = "0.1.0"
 description = "Aggregate ATProto event weather telemetry. Counts the weather, keeps no people."
-requires-python = ">=3.11"
+requires-python = ">=3.10"
 dependencies = ["websockets>=10.4"]
 
 [project.optional-dependencies]

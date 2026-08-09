@@ -1,0 +1,35 @@
+[Unit]
+# Deliberately NO After=/Requires= on the collector. Publication reads the
+# aggregate database and must succeed whether or not collection is running;
+# collection must continue whether or not publication ever runs again.
+Description=Weatherwatch - regenerate and publish the static /beef report
+Documentation=file:/opt/weatherwatch/deploy/README.md
+
+[Service]
+Type=oneshot
+User=weatherwatch
+Group=weatherwatch
+# Narrow, per-unit grant: group write on /var/www so the atomic directory
+# swap can stage a sibling. Applies to this oneshot only — the collector
+# never holds it, and no global group membership was changed.
+SupplementaryGroups=labelwatch
+WorkingDirectory=/opt/weatherwatch
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=WW_MODE=local
+Environment=WW_PY=/opt/weatherwatch/.venv/bin/python
+Environment=WW_DB=/var/lib/weatherwatch/weatherwatch.sqlite
+Environment=WW_BUILD=/var/lib/weatherwatch/build/beef
+Environment=WW_TARGET=/var/www/weatherwatch-beef
+# The canonical, tested publication path: render -> privacy gate -> atomic
+# swap. Not reimplemented here.
+ExecStart=/opt/weatherwatch/deploy/publish.sh
+
+ProtectSystem=strict
+ReadWritePaths=/var/lib/weatherwatch /var/www
+ProtectHome=true
+PrivateTmp=true
+NoNewPrivileges=true
+CapabilityBoundingSet=
+RestrictSUIDSGID=true
+StandardOutput=journal
+StandardError=journal
