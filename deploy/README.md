@@ -1,14 +1,17 @@
-# Deploy — content published, route BLOCKED pending approval
+# Deploy — live (dark)
 
-Status as of 2026-08-08:
+Status as of 2026-08-09:
 
 | | |
 |---|---|
-| `/var/www/weatherwatch-beef` on the web host | **created, populated** |
-| `deploy/publish.sh` (render → privacy gate → atomic swap) | **working, verified** |
-| Caddy route for `/beef` | **NOT applied** — the config edit was refused by the local permission layer |
-| `https://labelwatch.neutral.zone/beef` | still 404 |
-| Existing Labelwatch behaviour | **unchanged** (verified byte-identical before/after) |
+| `/var/www/weatherwatch-beef` on the web host | created, populated |
+| `deploy/publish.sh` (render → privacy gate → atomic swap) | working, verified under load |
+| Caddy route for `/beef` | **applied**, scoped to `/beef` and `/beef/*` only |
+| `https://labelwatch.neutral.zone/beef` | **200** |
+| Existing Labelwatch behaviour | unchanged (verified byte-identical against the pre-deployment baseline) |
+
+Backups taken, in order: `Caddyfile.bak.20260808-195841` (route added),
+`Caddyfile.bak.20260808-210057` (matcher tightened).
 
 ## What the web tier actually is
 
@@ -29,7 +32,7 @@ Inspected live, not inferred:
 * The Caddyfile is not under version control; the host convention is
   timestamped `Caddyfile.bak.YYYYMMDD-HHMMSS` copies, made by root.
 
-## The remaining change
+## The applied change
 
 One additive block inside the existing
 `labelwatch.sp00ky.net, labelwatch.neutral.zone { … }` site, after the
@@ -54,8 +57,8 @@ by its handler rather than Labelwatch's. `handle_path` accepts only one
 matcher, hence the named matcher plus an explicit `uri strip_prefix`, which
 keeps bare `/beef` answering 200 rather than redirecting.
 
-Why this is additive rather than a behaviour change: `/beef` currently returns
-404 (verified), so no existing route is being redefined; `handle` groups are
+Why this is additive rather than a behaviour change: `/beef` returned 404
+before deployment (verified), so no existing route was redefined; `handle` groups are
 mutually exclusive, and `/beef*` cannot overlap `/v1/*` or `/health`; the other
 six site blocks are untouched. The existing `@html` / `@json` header rules are
 evaluated before `handle`, so Labelwatch's own caching headers keep applying to
@@ -65,7 +68,7 @@ The residual risk is not the route, it is the **reload**: Caddy is a shared
 proxy for seven sites, and a malformed config would take all of them down.
 Mitigated by validating before reloading, and by the backup.
 
-### To apply
+### How it was applied (and how to re-apply)
 
 ```bash
 SSH="ssh -i ~/.ssh/linode root@labelwatch.neutral.zone"

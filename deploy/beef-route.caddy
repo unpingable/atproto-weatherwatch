@@ -1,7 +1,14 @@
     # Weatherwatch aggregate report (siloed; nothing links here, noindex).
     # Static only: separate root, separate publish path, no service.
-    handle_path /beef* {
+    #
+    # Two exact path patterns, not a prefix glob. `handle_path /beef*` also
+    # matched /beefsteak and /beefy.html, pulling unrelated paths into this
+    # namespace. handle_path accepts only one matcher, so: named matcher +
+    # explicit strip, which also keeps bare /beef at 200 rather than 301.
+    @beef path /beef /beef/*
+    handle @beef {
         root * /srv/www/weatherwatch-beef
         header X-Robots-Tag "noindex, nofollow, noarchive"
+        uri strip_prefix /beef
         file_server
     }
