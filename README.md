@@ -195,6 +195,19 @@ narrate a ratio as if only the numerator changed, keep both components
 inspectable, and do not treat a metric as a stable baseline merely because it
 sits in a denominator. The ratio is the hint; the primitives are the receipts.
 
+**State the negative scope first.** A cold reader — human or model — arriving
+at `/beef` reads "beef" plus Bluesky plus telemetry and concludes conflict
+monitoring. This was observed: an LLM given the page confidently classified it
+as a social-drama detector and had to reason its way back out. Every disclaimer
+on the page was about *coverage* (which relay, how complete); none said what is
+not measured, so there was nothing to correct the misread with.
+
+Note which phrase actually caused it. "Global Beef Index" is *obviously*
+unserious — that is the joke doing its job. "Cortisol accounting" was the
+dangerous one: solemn enough to parse as a real biomarker construct. The
+correction therefore leads the page, before either phrase, and `summary.json`
+carries `measures` / `does_not_measure` so a script never has to read prose.
+
 **Narrative restraint.** The instrument reports observable aggregate behaviour
 and bounded derived conditions. "Post deletes elevated, blocks down" must not
 become "morning-after beef" or "users are deleting evidence". Those readings

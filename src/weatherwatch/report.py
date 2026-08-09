@@ -626,11 +626,18 @@ def _build_html(conn, run_ids, runs, latest, series_map, totals_series,
 <style>{STYLE}</style>
 </head><body><div class="wrap">
 <h1>weatherwatch · platform weather</h1>
-<p class="sub">Cortisol accounting for the ATProto firehose. Aggregate
-activity observed from <strong>{_esc(latest.endpoint)}</strong> during the
-stated observation interval. Counts describe what this endpoint delivered;
-they are not a claim about the network's total activity, and no relay is
-authoritative or complete.</p>
+<p class="sub warn"><strong>Despite the name, this does not measure conflict,
+sentiment, users, or content.</strong> It counts how fast aggregate ATProto
+events occur — posts, likes, follows, blocks, deletes — and how well it is
+observing them. Nothing here identifies anyone, reconstructs a social graph,
+reads any post, or detects a dispute. <em>Global Beef Index</em> is a joke
+name for a composite that does not exist.</p>
+<p class="sub">Cortisol accounting for the ATProto firehose — event velocity,
+not affect. Aggregate activity observed from
+<strong>{_esc(latest.endpoint)}</strong> during the stated observation
+interval. Counts describe what this endpoint delivered; they are not a claim
+about the network's total activity, and no relay is authoritative or
+complete.</p>
 {_section_status(runs, health_points, latest, metric_totals)}
 {_section_weather(series_map)}
 {_section_conditions(conn, run_ids, series_map, totals_series)}
@@ -664,6 +671,13 @@ def _summary_json(runs, latest, series_map, totals_series, health_points,
         "collector_version": COLLECTOR_VERSION,
         "claim": ("Aggregate activity observed from this Jetstream source "
                   "during the stated observation interval."),
+        "measures": ("rates of aggregate ATProto events (posts, likes, "
+                     "follows, blocks, deletes, account/identity events) and "
+                     "the health of the observation itself"),
+        "does_not_measure": [
+            "conflict or disputes", "sentiment or affect", "individual users",
+            "post content or text", "the social graph", "any identity",
+        ],
         "source_endpoint": latest.endpoint,
         "runs": [
             {

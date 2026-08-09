@@ -41,6 +41,15 @@ def read_html(out: Path) -> str:
     return (out / "index.html").read_text()
 
 
+def prose(out: Path) -> str:
+    """Rendered text with whitespace collapsed.
+
+    Prose lives inside wrapped f-strings, so a literal match against the raw
+    file breaks whenever a sentence re-wraps. Normalise before asserting.
+    """
+    return re.sub(r"\s+", " ", read_html(out))
+
+
 # --- generation ------------------------------------------------------------
 
 def test_generates_from_synthetic_db(report_db, tmp_path):
@@ -117,9 +126,8 @@ def test_exact_observation_source_appears(report_db, tmp_path):
 def test_no_relay_described_as_authoritative(report_db, tmp_path):
     out = tmp_path / "beef"
     report.generate_report(report_db, out)
-    html = read_html(out).lower()
-    assert "no relay is\nauthoritative or complete" in html or \
-           "authoritative or complete" in html
+    html = prose(out).lower()
+    assert "authoritative or complete" in html
     for word in ("ground truth", "canonical source", "complete view"):
         assert word not in html, f"{word!r} implies completeness we cannot claim"
 
@@ -837,3 +845,64 @@ def test_cleanup_changed_no_formula_or_threshold():
     assert health.COVERAGE_LOW_THRESHOLD == 0.6
     assert len(derive.STANDARD_RATIOS) == 9, "no ratios added or removed"
     assert len(report.PRIMITIVES) == 16, "no metrics added or removed"
+
+
+# --- cold-read framing -----------------------------------------------------
+# A cold reader arriving at /beef with no context — human or model — reads
+# "beef" + Bluesky + telemetry and concludes conflict monitoring. Every
+# disclaimer on the page used to be about COVERAGE (which relay, how complete);
+# none said what is not measured. The correction has to arrive before the joke.
+
+DENIALS = ("conflict", "sentiment", "users", "content")
+
+
+def test_negative_scope_statement_precedes_everything_else(report_db, tmp_path):
+    out = tmp_path / "beef"
+    report.generate_report(report_db, out)
+    html_doc = prose(out)
+
+    denial = html_doc.index("does not measure")
+    assert denial < html_doc.index("Cortisol"), (
+        "the meme layer must be repaired before it is deployed"
+    )
+    assert denial < html_doc.index("A · Observation status"), (
+        "the correction belongs on the first screen, not below the fold"
+    )
+    for word in DENIALS:
+        assert word in html_doc[denial:denial + 400], f"{word!r} not denied"
+
+
+def test_page_denies_the_specific_misreadings(report_db, tmp_path):
+    out = tmp_path / "beef"
+    report.generate_report(report_db, out)
+    low = prose(out).lower()
+    for claim in ("identifies anyone", "reconstructs a social graph",
+                  "reads any post", "detects a dispute"):
+        assert claim in low, f"missing denial: {claim!r}"
+    assert "joke name for a composite that does not exist" in low
+
+
+def test_the_joke_survives_the_correction(report_db, tmp_path):
+    """Correcting the misread must not sand off the humour — the joke is the
+    disclaimer, and a solemn rename would imply unearned validity."""
+    out = tmp_path / "beef"
+    report.generate_report(report_db, out)
+    html_doc = prose(out)
+    assert "GLOBAL BEEF INDEX" in html_doc
+    assert "Cortisol accounting" in html_doc
+    assert "event velocity, not affect" in html_doc, (
+        "the stress-sounding phrase should repair itself in place"
+    )
+
+
+def test_machine_readers_get_the_same_correction(report_db, tmp_path):
+    """A script or model parsing summary.json should not have to read prose to
+    learn what this is not."""
+    out = tmp_path / "beef"
+    report.generate_report(report_db, out)
+    summary = json.loads((out / "summary.json").read_text())
+    assert "measures" in summary
+    nots = " ".join(summary["does_not_measure"]).lower()
+    for word in ("conflict", "sentiment", "individual users", "content",
+                 "social graph", "identity"):
+        assert word in nots, f"{word!r} not denied in the machine surface"
