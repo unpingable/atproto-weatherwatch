@@ -232,8 +232,52 @@ HATCH_DEF = """
 """
 
 
+#: Deliberately short and negative-first. An unfurl card is often ALL the
+#: context a reader gets, it is cached by whoever unfurls it, and it is seen by
+#: people who never open the page — so the denial has to be on the card, not
+#: just behind the link.
+SHARE_TITLE = "weatherwatch — platform weather"
+SHARE_DESCRIPTION = (
+    "Aggregate ATProto event rates and observation health, observed from one "
+    "named Jetstream source. Does not measure conflict, sentiment, users, or "
+    "content."
+)
+#: Static image, never regenerated with live figures: a share card outlives
+#: the numbers on it, and a cached card showing stale rates would mislead.
+SHARE_IMAGE = Path(__file__).resolve().parents[2] / "assets" / "og-card.png"
+
+
 def _esc(s) -> str:
     return html.escape(str(s), quote=True)
+
+
+def _share_meta(public_url: str | None) -> str:
+    """Open Graph / Twitter tags, emitted only when a canonical URL is given.
+
+    Default is none at all: the page stays entirely self-contained for local
+    viewing, and nothing advertises a location it may not be served from.
+    These affect how a link someone deliberately shares renders; they do not
+    make the page discoverable, and `noindex, nofollow, noarchive` still
+    governs crawling.
+    """
+    if not public_url:
+        return ""
+    base = public_url.rstrip("/")
+    return f"""
+<meta name="description" content="{_esc(SHARE_DESCRIPTION)}">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="weatherwatch">
+<meta property="og:title" content="{_esc(SHARE_TITLE)}">
+<meta property="og:description" content="{_esc(SHARE_DESCRIPTION)}">
+<meta property="og:url" content="{_esc(base + '/')}">
+<meta property="og:image" content="{_esc(base + '/og-card.png')}">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="{_esc(SHARE_DESCRIPTION)}">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="{_esc(SHARE_TITLE)}">
+<meta name="twitter:description" content="{_esc(SHARE_DESCRIPTION)}">
+<meta name="twitter:image" content="{_esc(base + '/og-card.png')}">"""
 
 
 def _fmt(v, digits=2, dash="—") -> str:
@@ -616,13 +660,14 @@ def _section_beef() -> str:
 # --- assembly --------------------------------------------------------------
 
 def _build_html(conn, run_ids, runs, latest, series_map, totals_series,
-                health_points, metric_totals, generated_at) -> str:
+                health_points, metric_totals, generated_at,
+                public_url) -> str:
     return f"""<!doctype html>
 <html lang="en"><head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="robots" content="noindex,nofollow,noarchive">
-<title>weatherwatch · platform weather</title>
+<title>weatherwatch · platform weather</title>{_share_meta(public_url)}
 <style>{STYLE}</style>
 </head><body><div class="wrap">
 <h1>weatherwatch · platform weather</h1>
@@ -727,6 +772,7 @@ def generate_report(
     out_dir: str | Path,
     run_ids: list[str] | None = None,
     now: datetime.datetime | None = None,
+    public_url: str | None = None,
 ) -> dict:
     """Render the dashboard into `out_dir`, atomically.
 
@@ -760,7 +806,7 @@ def generate_report(
     metric_totals = query.metric_totals(conn, run_ids)
     html_doc = _build_html(conn, run_ids, runs, latest, series_map,
                            totals_series, health_points, metric_totals,
-                           generated_at)
+                           generated_at, public_url)
     summary = _summary_json(runs, latest, series_map, totals_series,
                             health_points, generated_at)
 
@@ -771,6 +817,8 @@ def generate_report(
     (tmp / "index.html").write_text(html_doc, encoding="utf-8")
     (tmp / "summary.json").write_text(json.dumps(summary, indent=2,
                                                  default=str), encoding="utf-8")
+    if public_url and SHARE_IMAGE.exists():
+        shutil.copy(SHARE_IMAGE, tmp / "og-card.png")
 
     # Atomic-ish swap: rename the old tree aside, move the new one in, then
     # delete. A reader sees either the whole old report or the whole new one.

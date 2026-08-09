@@ -17,6 +17,7 @@ import argparse
 import asyncio
 import json
 import logging
+import os
 import signal
 import sys
 from pathlib import Path
@@ -215,7 +216,8 @@ def _cmd_report(args) -> int:
     from . import report
     conn = db.connect(args.db)
     run_ids = [args.run] if args.run else None
-    stats = report.generate_report(conn, args.output, run_ids=run_ids)
+    stats = report.generate_report(conn, args.output, run_ids=run_ids,
+                                   public_url=args.public_url)
     conn.close()
     print(json.dumps(stats, indent=2))
     return 0
@@ -262,6 +264,10 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("report", help="generate the static dashboard")
     p.add_argument("--output", required=True)
     p.add_argument("--run", default=None)
+    p.add_argument("--public-url", default=os.environ.get("WW_PUBLIC_URL"),
+                   help="canonical URL of the published report. Only when set "
+                        "are share-card meta tags emitted; without it the page "
+                        "is entirely self-contained.")
     p.set_defaults(fn=_cmd_report)
 
     p = sub.add_parser("version")

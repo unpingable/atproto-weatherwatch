@@ -28,6 +28,8 @@
 #   WW_REMOTE    live directory (remote)  (default /var/www/weatherwatch)
 #   WW_URL       verification URL         (empty in local mode = skip HTTP check)
 #   WW_PY        python for rendering     (default python3)
+#   WW_PUBLIC_URL canonical URL; only when set are share-card
+#                 meta tags + og-card.png emitted
 
 set -euo pipefail
 
@@ -48,7 +50,8 @@ SSH=(ssh -i "$SSH_KEY" -o BatchMode=yes -o ConnectTimeout=10 "$SSH_HOST")
 
 if [ "${1:-}" != "--skip-generate" ]; then
   echo "==> Rendering from $DB"
-  "$PY" -m weatherwatch.cli --db "$DB" report --output "$BUILD"
+  "$PY" -m weatherwatch.cli --db "$DB" report --output "$BUILD" \
+      ${WW_PUBLIC_URL:+--public-url "$WW_PUBLIC_URL"}
 fi
 
 [ -f "$BUILD/index.html" ] || { echo "!! no $BUILD/index.html" >&2; exit 1; }

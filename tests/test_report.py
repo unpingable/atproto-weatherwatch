@@ -906,3 +906,74 @@ def test_machine_readers_get_the_same_correction(report_db, tmp_path):
     for word in ("conflict", "sentiment", "individual users", "content",
                  "social graph", "identity"):
         assert word in nots, f"{word!r} not denied in the machine surface"
+
+
+# --- share card ------------------------------------------------------------
+# An unfurl card is often ALL the context a reader gets, it is cached by
+# whoever unfurls it, and it reaches people who never open the page. It is the
+# highest-risk cold-read surface, so the denial has to be on the card itself.
+
+PUBLIC = "https://example.invalid/weatherwatch"
+
+
+def test_no_share_metadata_by_default(report_db, tmp_path):
+    """Without an explicit canonical URL the page stays fully self-contained
+    and advertises no location it may not be served from."""
+    out = tmp_path / "beef"
+    report.generate_report(report_db, out)
+    html_doc = read_html(out)
+    assert "og:" not in html_doc
+    assert "twitter:" not in html_doc
+    assert 'name="description"' not in html_doc
+    assert not (out / "og-card.png").exists()
+
+
+def test_share_metadata_leads_with_the_denial(report_db, tmp_path):
+    out = tmp_path / "beef"
+    report.generate_report(report_db, out, public_url=PUBLIC)
+    html_doc = read_html(out)
+    for prop in ("og:title", "og:description", "og:url", "og:image",
+                 "twitter:card", "twitter:description"):
+        assert prop in html_doc, f"{prop} missing"
+    desc = report.SHARE_DESCRIPTION.lower()
+    for denial in ("conflict", "sentiment", "users", "content"):
+        assert denial in desc, f"card description does not deny {denial!r}"
+    assert "does not measure" in desc
+    # and it must not re-import the misreading it exists to prevent
+    for bait in ("beef", "drama", "fight", "feud"):
+        assert bait not in desc
+
+
+def test_share_card_image_ships_and_is_absolute(report_db, tmp_path):
+    out = tmp_path / "beef"
+    report.generate_report(report_db, out, public_url=PUBLIC)
+    assert (out / "og-card.png").exists(), "the card must be published with it"
+    html_doc = read_html(out)
+    assert f'content="{PUBLIC}/og-card.png"' in html_doc, (
+        "og:image must be absolute — unfurlers do not resolve relative paths"
+    )
+    assert f'content="{PUBLIC}/"' in html_doc, "og:url should be canonical"
+
+
+def test_share_card_is_static_and_carries_no_live_figures(report_db, tmp_path):
+    """A card outlives the numbers on it; a cached card showing stale rates
+    would mislead. The image is a fixed asset, not a render of current data."""
+    out = tmp_path / "beef"
+    report.generate_report(report_db, out, public_url=PUBLIC)
+    shipped = (out / "og-card.png").read_bytes()
+    assert shipped == report.SHARE_IMAGE.read_bytes()
+    assert "{" not in report.SHARE_DESCRIPTION, "no interpolated live values"
+
+
+def test_share_metadata_does_not_weaken_the_dark_posture(report_db, tmp_path):
+    out = tmp_path / "beef"
+    report.generate_report(report_db, out, public_url=PUBLIC)
+    html_doc = read_html(out)
+    assert 'content="noindex,nofollow,noarchive"' in html_doc, (
+        "share tags govern unfurling, not crawling; noindex still stands"
+    )
+    assert "<a " not in html_doc and "href=" not in html_doc
+    # every absolute URL in the head must be our own canonical origin
+    import re as _re
+    for m in _re.findall(r'content="(https?://[^"]+)"', html_doc):
+        assert m.startswith(PUBLIC), f"foreign origin in metadata: {m}"

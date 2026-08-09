@@ -121,6 +121,29 @@ the same shape the DID redirects in that file already use. Verified: `/beef`,
 
 Backup: `Caddyfile.bak.20260809-141216`.
 
+## Share card
+
+`og-card.png` plus Open Graph / Twitter tags are emitted **only** when a
+canonical URL is configured (`WW_PUBLIC_URL`, set in the publisher unit).
+Without it the report renders with no share metadata at all and stays entirely
+self-contained — which is what local and offline renders get.
+
+An unfurl card is the highest-risk cold-read surface there is: it is often all
+the context a reader gets, it is cached by whoever unfurls it, and it reaches
+people who never open the page. So the card leads with the denial —
+*"Not conflict. Not sentiment. Not users. Not content."* — and the description
+says the same in prose.
+
+The image is a **fixed asset**, never re-rendered from live data. A share card
+outlives the numbers printed on it; a cached card showing stale rates would
+mislead exactly the audience least able to check. Source and regeneration
+command are in `assets/og-card.src.html`.
+
+This does not weaken the dark posture. Share tags govern how a link *you
+deliberately share* renders; they do not make anything discoverable.
+`noindex, nofollow, noarchive` still applies to the page and to the image, and
+nothing links to either path.
+
 ## Witness declaration — gap noted, not improvised
 
 Per "declare before you disturb", a Caddy reload on this host should be
