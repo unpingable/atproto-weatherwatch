@@ -153,4 +153,9 @@ marked *calibration pending*.
 
 ## Deployment
 
-None. See `deploy/README.md` for a written proposal that has not been applied.
+Deployed privately, dark: static output served from a separate directory by
+the existing web tier, with nothing linking to it, no sitemap entry, and
+`noindex` at both the meta tag and the response header. Operational detail —
+including the URL, the exact route, and rollback — lives in
+`deploy/README.md`, which is the ops doc and not a public one. Publish with
+`./deploy/publish.sh`.
