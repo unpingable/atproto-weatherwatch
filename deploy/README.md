@@ -38,12 +38,21 @@ One additive block inside the existing
 ```caddyfile
     # Weatherwatch aggregate report (siloed; nothing links here, noindex).
     # Static only: separate root, separate publish path, no service.
-    handle_path /beef* {
+    @beef path /beef /beef/*
+    handle @beef {
         root * /srv/www/weatherwatch-beef
         header X-Robots-Tag "noindex, nofollow, noarchive"
+        uri strip_prefix /beef
         file_server
     }
 ```
+
+The matcher is two exact patterns, not a prefix glob. `handle_path /beef*`
+(the original form) matched anything *starting* with `/beef`, so `/beefsteak`
+and `/beefy.html` were entering the Weatherwatch namespace and being answered
+by its handler rather than Labelwatch's. `handle_path` accepts only one
+matcher, hence the named matcher plus an explicit `uri strip_prefix`, which
+keeps bare `/beef` answering 200 rather than redirecting.
 
 Why this is additive rather than a behaviour change: `/beef` currently returns
 404 (verified), so no existing route is being redefined; `handle` groups are

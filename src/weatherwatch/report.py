@@ -28,7 +28,7 @@ import shutil
 import sqlite3
 from pathlib import Path
 
-from . import COLLECTOR_VERSION, derive, query, timeutil
+from . import COLLECTOR_VERSION, derive, health, query, timeutil
 from .query import Series, WindowPoint
 
 # --- what to show ----------------------------------------------------------
@@ -108,8 +108,23 @@ STYLE = """
 body {
   margin:0; padding:24px; background:var(--bg); color:var(--ink);
   font:14px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  /* Long operational strings (endpoint URLs, run ids) must never widen the
+     page. `anywhere` breaks only when a break is actually required, unlike
+     `break-all`, which happily splits ordinary numbers mid-digit. */
+  overflow-wrap:anywhere;
 }
 .wrap { max-width:1180px; margin:0 auto; }
+
+/* Grid and flex children default to min-width:auto, so a child with an
+   intrinsic width (an SVG, a wide table) refuses to shrink and punches out
+   of its box. This one line is the actual fix for the chart overflow. */
+.grid > *, .panel { min-width:0; }
+
+/* Charts size to their container and scale via viewBox. No fixed pixel
+   width anywhere: a chart must never assume one viewport. */
+svg { display:block; max-width:100%; overflow:hidden; }
+.spark { width:100%; height:44px; }
+.strip { width:100%; height:26px; }
 h1 { font-size:20px; margin:0 0 2px; letter-spacing:.02em; }
 h2 { font-size:13px; text-transform:uppercase; letter-spacing:.09em;
      color:var(--muted); margin:28px 0 10px; font-weight:600; }
@@ -117,11 +132,21 @@ h2 { font-size:13px; text-transform:uppercase; letter-spacing:.09em;
 .panel { background:var(--panel); border:1px solid var(--rule);
          border-radius:8px; padding:14px 16px; }
 .grid { display:grid; gap:12px; }
-.g2 { grid-template-columns:repeat(auto-fit,minmax(330px,1fr)); }
-.g3 { grid-template-columns:repeat(auto-fit,minmax(232px,1fr)); }
+/* minmax(Npx, 1fr) has a HARD floor of Npx: below that the track keeps its
+   width and pushes the page sideways. min(Npx, 100%) lets the floor collapse
+   to the container on narrow viewports while behaving identically above it. */
+.g2 { grid-template-columns:repeat(auto-fit,minmax(min(330px,100%),1fr)); }
+.g3 { grid-template-columns:repeat(auto-fit,minmax(min(232px,100%),1fr)); }
 .kv { display:grid; grid-template-columns:auto 1fr; gap:3px 14px; }
 .kv dt { color:var(--muted); }
-.kv dd { margin:0; word-break:break-all; }
+.kv dd { margin:0; min-width:0; }
+@media (max-width:560px) {
+  /* Below this the label column starves the value column, and an endpoint
+     URL wraps to one or two characters per line. Stack instead. */
+  .kv { grid-template-columns:1fr; gap:0; }
+  .kv dt { margin-top:9px; }
+  body { padding:14px; }
+}
 .metric-name { font-size:12px; color:var(--muted); }
 .metric-val { font-size:19px; font-weight:600; }
 .metric-unit { font-size:11px; color:var(--muted); font-weight:400; }
@@ -130,13 +155,24 @@ th,td { text-align:left; padding:5px 9px; border-bottom:1px solid var(--rule); }
 th { color:var(--muted); font-weight:600; text-transform:uppercase;
      font-size:10.5px; letter-spacing:.06em; }
 td.num { text-align:right; font-variant-numeric:tabular-nums; }
-.pill { display:inline-block; padding:1px 7px; border-radius:9px;
-        font-size:11px; border:1px solid currentColor; }
+/* Condition badges: outline pills, deliberately not filled alert chips.
+   These are z-score cuts against a short trailing baseline, not calibrated
+   alarms, and they should not read as authoritative. */
+.pill { display:inline-block; padding:1px 8px; border-radius:9px;
+        font-size:11px; line-height:1.55; border:1px solid currentColor;
+        white-space:nowrap; letter-spacing:.03em; vertical-align:baseline; }
+td .pill { min-width:5.6em; text-align:center; }
+.note { color:var(--muted); font-size:11px; margin-top:3px; }
 .legend { display:flex; flex-wrap:wrap; gap:12px; font-size:11.5px;
           color:var(--muted); margin-top:9px; }
 .legend span { display:flex; align-items:center; gap:5px; }
 .swatch { width:11px; height:11px; border-radius:2px; display:inline-block; }
+/* Dense tables get a LOCAL horizontal scroller. The min-width keeps columns
+   legible and makes the scroller actually engage, instead of the table
+   squeezing itself into unreadable slivers or shoving the page sideways. */
 .scroll { overflow-x:auto; }
+.scroll table { min-width:32rem; }
+.scroll.wide table { min-width:46rem; }
 footer { margin-top:34px; padding-top:14px; border-top:1px solid var(--rule);
          color:var(--muted); font-size:11.5px; }
 .warn { border-left:3px solid var(--partial); padding-left:11px; }
@@ -173,6 +209,22 @@ def _iso(us: int | None) -> str:
     return timeutil.us_to_iso(us).replace("+00:00", "Z") if us else "—"
 
 
+def _fmt_lag(v: float | None) -> str:
+    """Format a lag reading, never presenting the clamp as a measurement.
+
+    `health.record_event_time` clamps every sample to LAG_CLAMP_MAX_S before
+    it reaches the EWMA, so a window that sat behind real time for an hour
+    records exactly 600.000s — the same number as one that sat behind for ten
+    minutes. Printing that as an exact value is a lie of precision, so a
+    saturated reading renders as "≥600s" instead.
+    """
+    if v is None:
+        return "—"
+    if v >= health.LAG_CLAMP_MAX_S:
+        return f"≥{health.LAG_CLAMP_MAX_S:.0f}s"
+    return f"{v:,.3f}s"
+
+
 # --- SVG -------------------------------------------------------------------
 
 def _sparkline(points: list[WindowPoint], width=300, height=44) -> str:
@@ -180,9 +232,15 @@ def _sparkline(points: list[WindowPoint], width=300, height=44) -> str:
 
     A hole in observation must be visually impossible to mistake for a run of
     zeros, so it gets both treatments: no line, plus a hatched band.
+
+    `width`/`height` define the viewBox coordinate space only — they are NOT
+    emitted as pixel attributes. The rendered size comes from CSS (`.spark`,
+    width:100%), so the chart scales to whatever the card gives it. All
+    geometry below is computed inside [0,width] x [0,height], and the SVG
+    viewport clips anything that isn't.
     """
     if not points:
-        return '<svg width="%d" height="%d"></svg>' % (width, height)
+        return f'<svg class="spark" viewBox="0 0 {width} {height}"></svg>'
 
     n = len(points)
     step = width / max(n, 1)
@@ -222,9 +280,9 @@ def _sparkline(points: list[WindowPoint], width=300, height=44) -> str:
         f'<circle cx="{seg[0][0]:.1f}" cy="{seg[0][1]:.1f}" r="1.7" '
         f'fill="var(--accent)"/>' for seg in segments if len(seg) == 1
     )
-    return (f'<svg width="{width}" height="{height}" '
-            f'viewBox="0 0 {width} {height}" preserveAspectRatio="none" '
-            f'role="img">{HATCH_DEF}{"".join(bands)}{paths}{dots}</svg>')
+    return (f'<svg class="spark" viewBox="0 0 {width} {height}" '
+            f'preserveAspectRatio="none" role="img">'
+            f'{HATCH_DEF}{"".join(bands)}{paths}{dots}</svg>')
 
 
 def _health_strip(points: list[WindowPoint], width=1100, height=26) -> str:
@@ -243,9 +301,9 @@ def _health_strip(points: list[WindowPoint], width=1100, height=26) -> str:
             f'<rect x="{i * step:.2f}" y="0" width="{max(step - 0.5, 0.6):.2f}" '
             f'height="{height}" fill="{fill}"><title>{_esc(title)}</title></rect>'
         )
-    return (f'<svg width="{width}" height="{height}" '
-            f'viewBox="0 0 {width} {height}" preserveAspectRatio="none" '
-            f'role="img">{HATCH_DEF}{"".join(cells)}</svg>')
+    return (f'<svg class="strip" viewBox="0 0 {width} {height}" '
+            f'preserveAspectRatio="none" role="img">'
+            f'{HATCH_DEF}{"".join(cells)}</svg>')
 
 
 def _legend(keys) -> str:
@@ -294,6 +352,14 @@ def _section_status(runs, health_points, latest) -> str:
         f"{_esc(k)} {v}" for k, v in sorted(counts.items(), key=lambda kv: -kv[1])
     )
 
+    saturated = any(v >= health.LAG_CLAMP_MAX_S for v in lag_vals + lag_max)
+    lag_note = (
+        f'<div class="note">≥{health.LAG_CLAMP_MAX_S:.0f}s means the reading '
+        f'hit the {health.LAG_CLAMP_MAX_S:.0f}s clamp — the true lag was that '
+        f'or greater. Replaying backlog from a resumed cursor saturates this '
+        f'while missing no events.</div>'
+    ) if saturated else ""
+
     return f"""
 <h2>A · Observation status</h2>
 <div class="grid g2">
@@ -319,8 +385,9 @@ def _section_status(runs, health_points, latest) -> str:
       <dt>Seams</dt><dd>{sum(r.seam_windows for r in runs)} (reconstructed)</dd>
       <dt>Gaps</dt><dd>{_fmt(sum(r.gap_us for r in runs) / 1e6, 2)}s</dd>
       <dt>Lag (EWMA)</dt>
-      <dd>med {_fmt(sorted(lag_vals)[len(lag_vals) // 2] if lag_vals else None, 3)}s ·
-          max {_fmt(max(lag_max) if lag_max else None, 3)}s</dd>
+      <dd>med {_fmt_lag(sorted(lag_vals)[len(lag_vals) // 2] if lag_vals else None)} ·
+          max {_fmt_lag(max(lag_max) if lag_max else None)}
+          {lag_note}</dd>
       <dt>Loss buckets</dt>
       <dd>parse {sum(r.parse_errors for r in runs)} ·
           rejected {sum(r.rejected_no_time_us for r in runs)} ·
@@ -329,7 +396,7 @@ def _section_status(runs, health_points, latest) -> str:
     </dl>
   </div>
 </div>
-<div class="panel scroll" style="margin-top:12px">
+<div class="panel scroll wide" style="margin-top:12px">
 <table><thead><tr><th>run</th><th>status</th><th>started</th><th>ended</th>
 <th>win</th><th>partial</th><th>recon</th><th>gap s</th><th>events</th></tr></thead>
 <tbody>{rows}</tbody></table>

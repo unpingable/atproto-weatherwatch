@@ -266,3 +266,111 @@ def test_coverage_denominator_uses_span_not_summed_window_widths(conn, tmp_path)
     assert interval["coverage_ratio"] == pytest.approx(1.0), (
         "the shared minute is fully observed between the two runs"
     )
+
+
+# --- presentation hygiene (M7 cleanup campaign) ----------------------------
+
+def test_charts_have_no_fixed_pixel_width(report_db, tmp_path):
+    """A fixed `width="300"` on an SVG gives it an intrinsic width, which a
+    grid child with the default min-width:auto then refuses to shrink below —
+    so the chart paints outside its card. No chart may carry pixel width."""
+    out = tmp_path / "beef"
+    report.generate_report(report_db, out)
+    html = read_html(out)
+    assert not re.search(r'<svg[^>]*\swidth="\d', html), (
+        "chart markup carries a fixed pixel width"
+    )
+    assert not re.search(r'<svg[^>]*\sheight="\d', html)
+
+
+def test_charts_are_responsive_and_scale_by_viewbox(report_db, tmp_path):
+    out = tmp_path / "beef"
+    report.generate_report(report_db, out)
+    html = read_html(out)
+    svgs = re.findall(r"<svg[^>]*>", html)
+    assert svgs
+    for tag in svgs:
+        assert "viewBox=" in tag, f"no viewBox: {tag}"
+        assert re.search(r'class="(spark|strip)"', tag), f"no sizing class: {tag}"
+    # and the classes must actually be sized responsively in the stylesheet
+    assert re.search(r"\.spark\s*\{[^}]*width:100%", html)
+    assert re.search(r"\.strip\s*\{[^}]*width:100%", html)
+    assert re.search(r"svg\s*\{[^}]*max-width:100%", html)
+
+
+def test_grid_children_can_shrink(report_db, tmp_path):
+    """min-width:0 on grid children is the actual fix for the overflow; the
+    minmax() floors must also collapse rather than forcing page width."""
+    out = tmp_path / "beef"
+    report.generate_report(report_db, out)
+    html = read_html(out)
+    assert re.search(r"\.grid\s*>\s*\*[^{]*\{[^}]*min-width:0", html)
+    for floor in ("330px", "232px"):
+        assert f"minmax(min({floor},100%),1fr)" in html, (
+            f"minmax floor {floor} is hard and will overflow narrow viewports"
+        )
+
+
+def test_long_operational_strings_are_structurally_contained(report_db, tmp_path):
+    out = tmp_path / "beef"
+    report.generate_report(report_db, out)
+    html = read_html(out)
+    assert "overflow-wrap:anywhere" in html
+    # break-all splits ordinary numbers mid-digit ("5053 9"); it must not return
+    assert "word-break:break-all" not in html
+
+
+def test_dense_tables_have_local_scrollers(report_db, tmp_path):
+    out = tmp_path / "beef"
+    report.generate_report(report_db, out)
+    html = read_html(out)
+    tables = re.findall(r"<table", html)
+    wrappers = re.findall(r'class="panel scroll[^"]*"', html)
+    assert len(wrappers) >= len(tables), "every table needs a local scroller"
+    assert re.search(r"\.scroll\s*\{[^}]*overflow-x:auto", html)
+    # a min-width is what makes the scroller engage instead of the table
+    # squeezing itself into illegibility
+    assert re.search(r"\.scroll table\s*\{[^}]*min-width", html)
+
+
+def test_saturated_lag_is_not_shown_as_an_exact_value(conn, tmp_path):
+    """health.record_event_time clamps every sample to LAG_CLAMP_MAX_S, so a
+    window stuck an hour behind records exactly 600.000s — the same number as
+    one ten minutes behind. Printing that as exact is a lie of precision."""
+    from weatherwatch import health
+    build_run(conn, "r1", [
+        {"metrics": dict(FULL), "lag_ewma_s": health.LAG_CLAMP_MAX_S,
+         "lag_max_s": health.LAG_CLAMP_MAX_S},
+        {"metrics": dict(FULL), "lag_ewma_s": health.LAG_CLAMP_MAX_S,
+         "lag_max_s": health.LAG_CLAMP_MAX_S},
+    ])
+    out = tmp_path / "beef"
+    report.generate_report(conn, out)
+    html = read_html(out)
+    assert "≥600s" in html, "saturated lag must be shown as a bound"
+    assert "600.000s" not in html, "clamp presented as an exact measurement"
+    assert "clamp" in html, "the cap should be explained in nearby help text"
+
+
+def test_unsaturated_lag_keeps_its_precision(conn, tmp_path):
+    build_run(conn, "r1", [
+        {"metrics": dict(FULL), "lag_ewma_s": 0.012, "lag_max_s": 0.044},
+        {"metrics": dict(FULL), "lag_ewma_s": 0.013, "lag_max_s": 0.051},
+    ])
+    out = tmp_path / "beef"
+    report.generate_report(conn, out)
+    html = read_html(out)
+    assert "0.013s" in html or "0.012s" in html
+    assert "≥600s" not in html
+    assert "clamp" not in html, "no cap note when nothing is saturated"
+
+
+def test_condition_badges_stay_non_authoritative(report_db, tmp_path):
+    """Outline pills, not filled alert chips, and the uncalibrated caveat
+    must survive any styling cleanup."""
+    out = tmp_path / "beef"
+    report.generate_report(report_db, out)
+    html = read_html(out)
+    assert re.search(r"\.pill\s*\{[^}]*border:1px solid currentColor", html)
+    assert "not calibrated" in html
+    assert "z-score" in html
