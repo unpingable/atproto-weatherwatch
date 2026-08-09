@@ -1,0 +1,7 @@
+    # Weatherwatch aggregate report (siloed; nothing links here, noindex).
+    # Static only: separate root, separate publish path, no service.
+    handle_path /beef* {
+        root * /srv/www/weatherwatch-beef
+        header X-Robots-Tag "noindex, nofollow, noarchive"
+        file_server
+    }

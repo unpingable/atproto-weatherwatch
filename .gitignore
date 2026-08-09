@@ -10,3 +10,4 @@ data/
 # in this repo is permitted to write raw, identity-bearing events at all.
 *.raw.jsonl
 raw/
+build/

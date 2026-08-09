@@ -1,86 +1,128 @@
-# Deploy — PROPOSED, NOT APPLIED
+# Deploy — content published, route BLOCKED pending approval
 
-**Nothing in this directory has been applied to any host.** It is a written
-proposal for review, produced because deploying the dashboard under
-`labelwatch.neutral.zone/beef` turned out to require touching shared
-production infrastructure, which the M5–M7 brief said to stop and report
-rather than improvise.
+Status as of 2026-08-08:
 
-## Why this stopped
+| | |
+|---|---|
+| `/var/www/weatherwatch-beef` on the web host | **created, populated** |
+| `deploy/publish.sh` (render → privacy gate → atomic swap) | **working, verified** |
+| Caddy route for `/beef` | **NOT applied** — the config edit was refused by the local permission layer |
+| `https://labelwatch.neutral.zone/beef` | still 404 |
+| Existing Labelwatch behaviour | **unchanged** (verified byte-identical before/after) |
 
-Deploying under that path needs three things, and the third is the problem:
+## What the web tier actually is
 
-1. A directory on the box for the generated static output. Routine.
-2. A way to get the artifact there (rsync over SSH). Routine — but
-   `DEPLOY_SSH_KEY` / `DEPLOY_HOST` are unset in this environment, so no
-   credentials are available here anyway.
-3. **A route for `/beef` on the Caddy instance that terminates
-   `labelwatch.neutral.zone`.** Labelwatch's own docs record that
-   *"Caddy is a shared proxy for 7 sites; config reloads are routine
-   disturbances"* (`labelwatch/specs/gaps/gap-spec-witness-coverage-requirements.md`,
-   H-4). Editing that config touches seven unrelated sites and reloads a
-   proxy that a witness system is watching.
+Inspected live, not inferred:
 
-That is not obviously isolated, so it is not something to improvise.
+* Caddy 2.10.0 in a container named `caddy`, serving **7 site blocks** from a
+  single 86-line file: host `/home/jbeck/atproto/Caddyfile` → container
+  `/etc/caddy/Caddyfile`. No `import` directives, so there is no drop-in
+  conf.d to add a file to.
+* The existing static-directory pattern is host `/var/www/<name>` →
+  container `/srv/www/<name>` (bind-mounted **read-only**) plus
+  `root * /srv/www/<name>` + `file_server`. Used by `labelwatch`, `lexidoku`
+  and `stechometer`. `/beef` uses exactly this pattern — no new service, no
+  new mount, no reverse proxy.
+* Labelwatch's own block already mixes a `handle @api` group with a trailing
+  `file_server`, so adding one more mutually-exclusive `handle_path` group is
+  the same shape as what is already there.
+* The Caddyfile is not under version control; the host convention is
+  timestamped `Caddyfile.bak.YYYYMMDD-HHMMSS` copies, made by root.
 
-## The trap that must be avoided
+## The remaining change
 
-The tempting shortcut is to write the report into `/var/www/labelwatch/beef`
-and skip the Caddy change. **Do not.** Labelwatch regenerates its site by
-atomic directory replacement — it renames a freshly built tree over its
-webroot. Anything else living inside that tree is deleted on the next
-regeneration. Worse, it would couple the two systems in exactly the way the
-brief forbids: the dashboard would silently vanish whenever labelwatch
-published.
-
-The output directory must be outside labelwatch's webroot.
-
-## What is needed (for review, then execution by a human)
-
-```bash
-# 1. A directory owned by whoever runs the collector, outside labelwatch's tree
-sudo mkdir -p /var/www/weatherwatch-beef
-sudo chown "$COLLECTOR_USER":"$COLLECTOR_USER" /var/www/weatherwatch-beef
-```
+One additive block inside the existing
+`labelwatch.sp00ky.net, labelwatch.neutral.zone { … }` site, after the
+`handle @api` group (the snippet also lives at `deploy/beef-route.caddy`):
 
 ```caddyfile
-# 2. Inside the existing labelwatch.neutral.zone site block.
-#    THIS IS THE CHANGE THAT NEEDS A DECISION — it edits a shared proxy.
-handle_path /beef/* {
-    root * /var/www/weatherwatch-beef
-    file_server
-    header {
-        X-Robots-Tag "noindex, nofollow, noarchive"
-        Cache-Control "no-cache, must-revalidate"
+    # Weatherwatch aggregate report (siloed; nothing links here, noindex).
+    # Static only: separate root, separate publish path, no service.
+    handle_path /beef* {
+        root * /srv/www/weatherwatch-beef
+        header X-Robots-Tag "noindex, nofollow, noarchive"
+        file_server
     }
-}
 ```
+
+Why this is additive rather than a behaviour change: `/beef` currently returns
+404 (verified), so no existing route is being redefined; `handle` groups are
+mutually exclusive, and `/beef*` cannot overlap `/v1/*` or `/health`; the other
+six site blocks are untouched. The existing `@html` / `@json` header rules are
+evaluated before `handle`, so Labelwatch's own caching headers keep applying to
+its own paths exactly as before.
+
+The residual risk is not the route, it is the **reload**: Caddy is a shared
+proxy for seven sites, and a malformed config would take all of them down.
+Mitigated by validating before reloading, and by the backup.
+
+### To apply
 
 ```bash
-# 3. Publish. The collector writes locally; only the rendered output ships.
-weatherwatch report --output /var/www/weatherwatch-beef
-# or, from a workstation:
-rsync -a --delete ./beef/ "$HOST:/var/www/weatherwatch-beef/"
+SSH="ssh -i ~/.ssh/linode root@labelwatch.neutral.zone"
+
+# 1. Back up, following the host's own convention
+$SSH 'cp -a /home/jbeck/atproto/Caddyfile \
+      /home/jbeck/atproto/Caddyfile.bak.$(date +%Y%m%d-%H%M%S)'
+
+# 2. Insert the block above after the `handle @api { … }` group
+
+# 3. Validate BEFORE reloading — this is the step that protects the other six sites
+$SSH 'docker exec caddy caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile'
+
+# 4. Graceful, zero-downtime reload
+$SSH 'docker exec caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile'
+
+# 5. Verify
+curl -sS -o /dev/null -w '%{http_code}\n' https://labelwatch.neutral.zone/beef/
+curl -sS -o /dev/null -w '%{http_code}\n' https://labelwatch.neutral.zone/        # must stay 200
+curl -sS -o /dev/null -w '%{http_code}\n' https://stechometer.neutral.zone/       # must stay 200
 ```
 
-Per this repo's own operating doctrine, a Caddy reload on a witnessed host is
-a **declared disturbance**: declare the window to the witness before touching
-it, sign the declaration, and cover the signals a reload actually disturbs.
-Do not suppress alerts instead.
+### To roll back
+
+```bash
+$SSH 'cp -a /home/jbeck/atproto/Caddyfile.bak.<stamp> /home/jbeck/atproto/Caddyfile \
+      && docker exec caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile'
+```
+
+Removing `/var/www/weatherwatch-beef` is optional; while no route points at it
+it serves nothing.
+
+## Witness declaration — gap noted, not improvised
+
+Per "declare before you disturb", a Caddy reload on this host should be
+declared to NQ first. NQ has no CLI or declaration surface **on this host** —
+it is proxied from elsewhere via `172.17.0.1:9848` — so there was nothing to
+declare to from here. Following the doctrine, no suppression was improvised
+and the gap is recorded here instead. A graceful `caddy reload` is a config
+swap with no connection drop, and Labelwatch's own witness requirements
+already class config reloads as routine disturbances.
+
+## Publishing
+
+```bash
+./deploy/publish.sh                  # regenerate from the local DB, then publish
+./deploy/publish.sh --skip-generate  # publish an already-rendered build/beef
+```
+
+Renders locally, refuses to ship anything matching a DID / `at://` URI / CID /
+Bluesky handle, rsyncs to `/var/www/weatherwatch-beef.incoming`, then swaps by
+rename. A reader sees the whole old report or the whole new one.
+
+Verified end to end: the swap ran against the live host and left the content in
+place with no stray temp directories.
 
 ## Separability
 
-The collector never talks to Labelwatch, never reads its database, and never
-requires it to be healthy. It writes a SQLite file on local disk; the
-dashboard is rendered from that file into a directory. If Labelwatch is down,
-collection continues; if the collector is down, the last rendered report keeps
-serving. That independence is deliberate and should survive any deployment
-choice made here.
+The collector runs wherever you run it, writes SQLite to local disk, and never
+contacts Labelwatch or this host. Only rendered HTML is pushed, by an explicit
+manual command. If Labelwatch is down, collection is unaffected; if the
+collector never runs again, the last published report keeps serving.
 
 ## Not a launch
 
-Whatever is decided, this is a dark deployment: no link from any Labelwatch
-page, no navigation entry, no sitemap, no announcement, no README pointing at
-a live URL. The generated HTML carries `noindex, nofollow, noarchive` and the
-proposed route sets `X-Robots-Tag` to match — defensive only, not
-discoverability work.
+Dark deployment. No link from any Labelwatch page, no navigation entry, no
+sitemap or robots change, no announcement, no public documentation of the URL.
+The page carries `noindex, nofollow, noarchive` in a meta tag and the route
+adds a matching `X-Robots-Tag` — defensive only, not discoverability work.
