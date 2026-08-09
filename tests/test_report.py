@@ -172,10 +172,10 @@ def test_beef_index_is_a_disabled_placeholder(report_db, tmp_path):
     report.generate_report(report_db, out)
     html = read_html(out)
     assert "GLOBAL BEEF INDEX" in html
-    assert "calibration pending" in html
+    assert "undefined" in html
     # No formula, no score, no number attached to it.
     beef = html[html.index("GLOBAL BEEF INDEX"):]
-    beef = beef[:beef.index("</div>", beef.index("calibration pending"))]
+    beef = beef[:beef.index("</div>", beef.index("undefined"))]
     assert not re.search(r"\d+\.\d+", beef), "the placeholder must carry no value"
 
 
@@ -662,26 +662,68 @@ def test_timer_publishes_every_five_minutes_without_catchup():
 
 # --- semantic honesty of the unclassified presentation ---------------------
 
-def test_untracked_vocabulary_is_not_presented_as_observation_loss(report_db,
-                                                                   tmp_path):
-    """`unclassified` is, measurably, entirely `unclassified.collection`, and
-    that is dominated by valid records from collections we chose not to track.
-    Listing it beside parse/rejected/late read as observer failure; it is
-    product scope."""
+def test_ingest_accounting_separates_failure_from_deliberate_scope(report_db,
+                                                                  tmp_path):
+    """Four of the five taxonomy categories are already separately persisted:
+    parse_errors / rejected_no_time_us / late_events are their own columns, and
+    "unknown schema" is the sum of three separately-keyed metrics. Only
+    untracked collection shares a key with a never-observed failure case.
+
+    The section must therefore show observer FAILURES apart from deliberate
+    SCOPE; the old "Loss buckets: … unclassified 121,312" read as 121k observer
+    failures when the observer had failed zero times."""
     out = tmp_path / "beef"
     report.generate_report(report_db, out)
     html_doc = read_html(out)
 
-    loss = html_doc[html_doc.index("Loss buckets"):]
-    loss = loss[:loss.index("</dd>")]
-    assert "unclassified" not in loss, (
-        "untracked vocabulary must not sit in the loss buckets line"
+    assert "Loss buckets" not in html_doc, (
+        "the section held deliberate scope as well as loss"
     )
-    for expected in ("parse", "rejected", "late"):
-        assert expected in loss
+    failures = html_doc[html_doc.index("Ingest accounting"):]
+    failures = failures[:failures.index("</dd>")]
+    for category in ("parse errors", "no time_us", "unknown schema",
+                     "late events"):
+        assert category in failures, f"{category} missing from the taxonomy"
+    assert "untracked" not in failures.lower(), (
+        "deliberate scope must not sit in the observer-failure line"
+    )
 
-    assert "Untracked vocabulary" in html_doc
-    assert "not observation" in html_doc and "loss" in html_doc
+    scope = html_doc[html_doc.index("Untracked collection"):]
+    scope = scope[:scope.index("</dd>")]
+    assert "not</strong>\n          loss" in scope or "not" in scope
+    assert "Deliberate scope" in scope
+
+
+def test_untracked_count_is_not_folded_into_any_loss_figure(report_db, tmp_path):
+    """Untracked vocabulary must not contribute to a health/loss number."""
+    from weatherwatch import health
+    assert "unclassified" in health.KNOWN_LOSS_PATHS, (
+        "it stays an instrumented bucket — it just is not loss"
+    )
+    losses = {k: 0 for k in health.KNOWN_LOSS_PATHS}
+    h = health.ObservationHealth()
+    for _ in range(health.WARMUP_WINDOWS):
+        h.record_window(600, 60.0, losses)
+    snap = h.record_window(600, 60.0, {**losses, "unclassified": 999_999})
+    assert snap["loss_frac"] == 0.0, (
+        "untracked vocabulary must never move the loss fraction"
+    )
+    assert "loss_observed" not in snap["gate_reasons"]
+
+
+def test_legacy_key_ambiguity_is_stated_not_hidden(conn, tmp_path):
+    build_run(conn, "r1", [
+        {"metrics": {**FULL, "unclassified.collection": 40}},
+        {"metrics": {**FULL, "unclassified.collection": 35}},
+    ])
+    out = tmp_path / "beef"
+    report.generate_report(conn, out)
+    html_doc = read_html(out)
+    assert "75" in html_doc, "the untracked count should be shown"
+    assert "unclassified.collection" in html_doc, (
+        "the legacy key backing the count should be named"
+    )
+    assert "not\n          yet observed" in html_doc or "not yet observed" in html_doc
 
 
 def test_beef_placeholder_keeps_the_joke_and_claims_no_calibration(report_db,
@@ -692,7 +734,7 @@ def test_beef_placeholder_keeps_the_joke_and_claims_no_calibration(report_db,
     report.generate_report(report_db, out)
     html_doc = read_html(out)
     assert "GLOBAL BEEF INDEX" in html_doc
-    assert "calibration pending" in html_doc
+    assert "undefined" in html_doc
     for solemn in ("Behavioral Turbulence", "Social Stress Index",
                    "Network Conflict Index", "Conflict Score"):
         assert solemn not in html_doc, f"{solemn!r} implies unearned validity"
@@ -719,3 +761,79 @@ def test_ratios_keep_their_components_inspectable(report_db, tmp_path):
     for _label, num, den in derive_module.STANDARD_RATIOS:
         assert num in summary["metrics"], f"{num} not inspectable"
         assert den in summary["metrics"], f"{den} not inspectable"
+
+
+def test_beef_placeholder_makes_no_overall_normality_claim(report_db, tmp_path):
+    """"Everyone appears normal" read as a platform-wide interpretation from a
+    composite that does not exist."""
+    out = tmp_path / "beef"
+    report.generate_report(report_db, out)
+    low = read_html(out).lower()
+    for claim in ("everyone appears normal", "looks calm", "no unusual",
+                  "nothing to see", "no conflict detected", "all quiet"):
+        assert claim not in low, f"overall social assessment: {claim!r}"
+
+
+def test_beef_placeholder_does_not_promise_future_calibration(report_db,
+                                                              tmp_path):
+    """"calibration pending" implied an externally validated target is merely
+    waiting to be collected. It is not assumed to exist."""
+    out = tmp_path / "beef"
+    report.generate_report(report_db, out)
+    html_doc = read_html(out)
+    assert "calibration pending" not in html_doc
+    assert "undefined" in html_doc
+    assert "calibration not assumed" in html_doc
+    assert "Primitive conditions above remain\n    authoritative." in html_doc \
+        or "remain" in html_doc
+    # and not prematurely claiming a composite exists
+    assert "uncalibrated by design" not in html_doc, (
+        "that wording implies a formula already exists"
+    )
+
+
+def test_latest_column_states_which_window_it_means(report_db, tmp_path):
+    """"/s now" read as instantaneous. It is the most recent OBSERVED window."""
+    out = tmp_path / "beef"
+    report.generate_report(report_db, out)
+    html_doc = read_html(out)
+    assert ">latest /s<" in html_doc
+    assert "/s now" not in html_doc
+    assert "most\nrecent <em>observed</em>" in html_doc or "most recent" in html_doc
+    for wrong in ("instantaneous reading", "live gauge", "average over the run"):
+        assert wrong in html_doc, f"the note should rule out {wrong!r}"
+
+
+def test_ratio_note_states_the_two_body_problem(report_db, tmp_path):
+    out = tmp_path / "beef"
+    report.generate_report(report_db, out)
+    html_doc = read_html(out)
+    assert "two-body system" in html_doc
+    assert "it means" in html_doc and "is small" in html_doc, (
+        "small-denominator caveat"
+    )
+
+
+def test_every_ratio_component_is_also_a_primitive_card(report_db, tmp_path):
+    """The ratio note promises the components appear as their own cards. Keep
+    that true: the receipts must exist for every hint."""
+    card_metrics = set()
+    for spec in report.PRIMITIVES:
+        card_metrics.update(report._metric_keys(spec))
+    for label, num, den in derive_module.STANDARD_RATIOS:
+        assert num in card_metrics, f"{label}: numerator {num} has no card"
+        assert den in card_metrics, f"{label}: denominator {den} has no card"
+
+
+def test_cleanup_changed_no_formula_or_threshold():
+    """This pass was presentation only."""
+    from weatherwatch import derive, health
+    assert (derive.Z_SURGING, derive.Z_ELEVATED,
+            derive.Z_QUIET, derive.Z_DEGRADING) == (3.0, 1.5, -1.5, -3.0)
+    assert derive.DEFAULT_BASELINE_N == 15
+    assert derive.MIN_BASELINE_SAMPLES == 5
+    assert health.LAG_CLAMP_MAX_S == 600.0
+    assert health.LAG_HIGH_THRESHOLD_S == 120
+    assert health.COVERAGE_LOW_THRESHOLD == 0.6
+    assert len(derive.STANDARD_RATIOS) == 9, "no ratios added or removed"
+    assert len(report.PRIMITIVES) == 16, "no metrics added or removed"

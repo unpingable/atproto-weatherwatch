@@ -25,6 +25,14 @@ Measured on the live database, 9,738,714 observed events:
 the same 9.74 M events. So `window_health.unclassified` is, in practice,
 exactly `unclassified.collection`.
 
+**Update 2026-08-09:** four of the five taxonomy categories turned out to be
+*already* separately persisted — `parse_errors`, `rejected_no_time_us` and
+`late_events` are their own `window_health` columns, and "unknown schema" is
+the sum of three separately-keyed metrics (`unclassified.operation`,
+`unclassified.kind`, `malformed.commit`). The dashboard now presents the full
+five-way split with no collector or schema change. Only the last category
+remains imprecise, which is what the key split below would fix.
+
 `classify._classify_commit` returns that one key from two different places:
 
 * a commit whose `collection` is missing or empty — a genuine

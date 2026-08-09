@@ -358,7 +358,7 @@ def _legend(keys) -> str:
 
 # --- sections --------------------------------------------------------------
 
-def _section_status(runs, health_points, latest) -> str:
+def _section_status(runs, health_points, latest, metric_totals) -> str:
     lag_vals = [p.lag_ewma_s for p in health_points if p.lag_ewma_s is not None]
     lag_max = [p.lag_max_s for p in health_points if p.lag_max_s is not None]
     obs_s = sum(p.observed_seconds for p in health_points if p.observed)
@@ -396,10 +396,29 @@ def _section_status(runs, health_points, latest) -> str:
     # for valid records from collections we deliberately do not track. Showing
     # it beside parse/rejected/late implied the observer had failed 121k times
     # when it had failed zero times. Separated, and named for what it is.
-    untracked = sum(r.unclassified for r in runs)
+    # The five-way split the taxonomy needs is already available in persisted
+    # data, with one caveat. parse_errors / rejected_no_time_us / late_events
+    # are their own window_health columns. "unknown schema" is the sum of three
+    # separately-keyed metrics. Only "untracked collection" is imprecise:
+    # `unclassified.collection` is emitted both for a commit with no collection
+    # at all (a real failure) and for a commit from a collection outside the
+    # vocabulary (deliberate scope). The first has never been observed — M0 saw
+    # `collection` present on 197,926/197,926 commits — so the count is read as
+    # untracked, and the residual ambiguity is stated rather than hidden.
+    unknown_schema = sum(
+        metric_totals.get(k, 0)
+        for k in ("unclassified.operation", "unclassified.kind",
+                  "malformed.commit")
+    )
+    untracked = metric_totals.get("unclassified.collection", 0)
     total_events = sum(r.events for r in runs)
-    untracked_pct = (f" ({100 * untracked / total_events:.2f}% of observed)"
-                     if total_events else "")
+    untracked_pct = (f" events ({100 * untracked / total_events:.2f}% of observed)"
+                     if total_events else " events")
+    legacy_note = (
+        " Counted under the legacy <code>unclassified.collection</code> key, "
+        "which would also capture a commit carrying no collection — a case not "
+        "yet observed."
+    ) if untracked else ""
 
     saturated = any(v >= health.LAG_CLAMP_MAX_S for v in lag_vals + lag_max)
     lag_note = (
@@ -437,15 +456,19 @@ def _section_status(runs, health_points, latest) -> str:
       <dd>med {_fmt_lag(sorted(lag_vals)[len(lag_vals) // 2] if lag_vals else None)} ·
           max {_fmt_lag(max(lag_max) if lag_max else None)}
           {lag_note}</dd>
-      <dt>Loss buckets</dt>
-      <dd>parse {sum(r.parse_errors for r in runs)} ·
-          rejected {sum(r.rejected_no_time_us for r in runs)} ·
-          late {sum(r.late_events for r in runs)}</dd>
-      <dt>Untracked vocabulary</dt>
-      <dd>{_fmt(untracked, 0)} events{untracked_pct}
-          <div class="note">Valid ATProto records from collections outside the
-          tracked metric vocabulary. This is product scope, not observation
-          loss — the observer read them fine and chose not to count them.</div></dd>
+      <dt>Ingest accounting</dt>
+      <dd>parse errors {sum(r.parse_errors for r in runs)} ·
+          no time_us {sum(r.rejected_no_time_us for r in runs)} ·
+          unknown schema {_fmt(unknown_schema, 0)} ·
+          late events {sum(r.late_events for r in runs)}
+          <div class="note">Events the observer failed to account for: could
+          not parse, could not place on the observation clock, could not
+          understand, or arrived after its window had closed.</div></dd>
+      <dt>Untracked collection</dt>
+      <dd>{_fmt(untracked, 0)}{untracked_pct}
+          <div class="note">Valid records from ATProto collections outside the
+          tracked metric vocabulary. Deliberate scope, <strong>not</strong>
+          loss — the observer read them and chose not to count them.{legacy_note}</div></dd>
     </dl>
   </div>
 </div>
@@ -478,6 +501,7 @@ def _section_weather(series_map: dict[str, Series]) -> str:
 
 
 def _section_conditions(conn, run_ids, series_map, totals_series) -> str:
+    width = totals_series.bucket_width
     rows = []
     for label, num, den in derive.STANDARD_RATIOS:
         a, b = series_map.get(num), series_map.get(den)
@@ -535,17 +559,27 @@ def _section_conditions(conn, run_ids, series_map, totals_series) -> str:
     <th>windows</th></tr></thead><tbody>{''.join(rows)}</tbody></table>
   </div>
   <div class="panel scroll">
-    <table><thead><tr><th>metric</th><th>/s now</th><th>baseline</th><th>z</th>
+    <table><thead><tr><th>metric</th><th>latest /s</th><th>baseline</th><th>z</th>
     <th>Δ</th><th>condition</th><th>n</th></tr></thead>
     <tbody>{''.join(dep_rows)}</tbody></table>
   </div>
 </div>
-<p class="sub" style="margin-top:9px">Conditions are threshold cuts on a
-z-score against the last {derive.DEFAULT_BASELINE_N} eligible windows of the
-same stream (surging z≥3, elevated z≥1.5, quiet z≤−1.5, degrading z≤−3;
-unknown below {derive.MIN_BASELINE_SAMPLES} samples). They are not calibrated
-against anything and carry no statistical warrant beyond “this window looked
-different from the recent past”.</p>"""
+<p class="sub" style="margin-top:9px"><strong>latest /s</strong> is the most
+recent <em>observed</em> {width}-second window — not an instantaneous reading,
+not a live gauge, and not an average over the run. <strong>baseline</strong> is
+the mean of the last {derive.DEFAULT_BASELINE_N} <em>eligible</em> windows
+before it; partial, gapped, lossy and coverage-degraded windows are skipped
+rather than filled.</p>
+<p class="sub">Conditions are threshold cuts on that z-score (surging z≥3,
+elevated z≥1.5, quiet z≤−1.5, degrading z≤−3; unknown below
+{derive.MIN_BASELINE_SAMPLES} samples). They are not calibrated against
+anything and carry no statistical warrant beyond “this window looked different
+from the recent past”.</p>
+<p class="sub">Every ratio is a two-body system: <em>a/b</em> can move because
+<em>a</em> rose, because <em>b</em> fell, or because both did — and it means
+little when <em>b</em> is small. The ratio is the hint; the primitive cards
+above are the receipts, and each ratio's numerator and denominator appear
+there as their own cards.</p>"""
 
 
 def _section_health_strip(health_points) -> str:
@@ -571,10 +605,10 @@ def _section_beef() -> str:
 <h2>E · Beef conditions</h2>
 <div class="panel beef">
   <div class="big">GLOBAL BEEF INDEX</div>
-  <div style="margin-top:6px">calibration pending</div>
+  <div style="margin-top:6px">undefined — calibration not assumed</div>
   <div style="margin-top:10px;font-size:11.5px;opacity:.75">
-    Everyone appears normal. No composite index is defined yet; the
-    primitives above are the honest version.
+    No composite has been defined. Primitive conditions above remain
+    authoritative.
   </div>
 </div>"""
 
@@ -582,7 +616,7 @@ def _section_beef() -> str:
 # --- assembly --------------------------------------------------------------
 
 def _build_html(conn, run_ids, runs, latest, series_map, totals_series,
-                health_points, generated_at) -> str:
+                health_points, metric_totals, generated_at) -> str:
     return f"""<!doctype html>
 <html lang="en"><head>
 <meta charset="utf-8">
@@ -597,7 +631,7 @@ activity observed from <strong>{_esc(latest.endpoint)}</strong> during the
 stated observation interval. Counts describe what this endpoint delivered;
 they are not a claim about the network's total activity, and no relay is
 authoritative or complete.</p>
-{_section_status(runs, health_points, latest)}
+{_section_status(runs, health_points, latest, metric_totals)}
 {_section_weather(series_map)}
 {_section_conditions(conn, run_ids, series_map, totals_series)}
 {_section_health_strip(health_points)}
@@ -709,8 +743,10 @@ def generate_report(
     for metric in sorted(wanted):
         series_map[metric] = query.series(conn, run_ids, metric)
 
+    metric_totals = query.metric_totals(conn, run_ids)
     html_doc = _build_html(conn, run_ids, runs, latest, series_map,
-                           totals_series, health_points, generated_at)
+                           totals_series, health_points, metric_totals,
+                           generated_at)
     summary = _summary_json(runs, latest, series_map, totals_series,
                             health_points, generated_at)
 
