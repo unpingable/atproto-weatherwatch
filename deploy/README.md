@@ -4,10 +4,10 @@ Status as of 2026-08-09:
 
 | | |
 |---|---|
-| `/var/www/weatherwatch-beef` on the web host | created, populated |
+| `/var/www/weatherwatch` on the web host | created, populated |
 | `deploy/publish.sh` (render → privacy gate → atomic swap) | working, verified under load |
-| Caddy route for `/beef` | **applied**, scoped to `/beef` and `/beef/*` only |
-| `https://labelwatch.neutral.zone/beef` | **200** |
+| Caddy route for `/weatherwatch` | **applied**, scoped to `/weatherwatch` and `/beef/*` only |
+| `https://labelwatch.neutral.zone/weatherwatch` | **200** |
 | Existing Labelwatch behaviour | unchanged (verified byte-identical against the pre-deployment baseline) |
 
 Backups taken, in order: `Caddyfile.bak.20260808-195841` (route added),
@@ -24,7 +24,7 @@ Inspected live, not inferred:
 * The existing static-directory pattern is host `/var/www/<name>` →
   container `/srv/www/<name>` (bind-mounted **read-only**) plus
   `root * /srv/www/<name>` + `file_server`. Used by `labelwatch`, `lexidoku`
-  and `stechometer`. `/beef` uses exactly this pattern — no new service, no
+  and `stechometer`. `/weatherwatch` uses exactly this pattern — no new service, no
   new mount, no reverse proxy.
 * Labelwatch's own block already mixes a `handle @api` group with a trailing
   `file_server`, so adding one more mutually-exclusive `handle_path` group is
@@ -51,13 +51,13 @@ One additive block inside the existing
 ```
 
 The matcher is two exact patterns, not a prefix glob. `handle_path /beef*`
-(the original form) matched anything *starting* with `/beef`, so `/beefsteak`
+(the original form) matched anything *starting* with `/weatherwatch`, so `/beefsteak`
 and `/beefy.html` were entering the Weatherwatch namespace and being answered
 by its handler rather than Labelwatch's. `handle_path` accepts only one
 matcher, hence the named matcher plus an explicit `uri strip_prefix`, which
-keeps bare `/beef` answering 200 rather than redirecting.
+keeps bare `/weatherwatch` answering 200 rather than redirecting.
 
-Why this is additive rather than a behaviour change: `/beef` returned 404
+Why this is additive rather than a behaviour change: `/weatherwatch` returned 404
 before deployment (verified), so no existing route was redefined; `handle` groups are
 mutually exclusive, and `/beef*` cannot overlap `/v1/*` or `/health`; the other
 six site blocks are untouched. The existing `@html` / `@json` header rules are
@@ -86,7 +86,7 @@ $SSH 'docker exec caddy caddy validate --config /etc/caddy/Caddyfile --adapter c
 $SSH 'docker exec caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile'
 
 # 5. Verify
-curl -sS -o /dev/null -w '%{http_code}\n' https://labelwatch.neutral.zone/beef/
+curl -sS -o /dev/null -w '%{http_code}\n' https://labelwatch.neutral.zone/weatherwatch/
 curl -sS -o /dev/null -w '%{http_code}\n' https://labelwatch.neutral.zone/        # must stay 200
 curl -sS -o /dev/null -w '%{http_code}\n' https://stechometer.neutral.zone/       # must stay 200
 ```
@@ -98,8 +98,28 @@ $SSH 'cp -a /home/jbeck/atproto/Caddyfile.bak.<stamp> /home/jbeck/atproto/Caddyf
       && docker exec caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile'
 ```
 
-Removing `/var/www/weatherwatch-beef` is optional; while no route points at it
+Removing `/var/www/weatherwatch` is optional; while no route points at it
 it serves nothing.
+
+## Path rename (2026-08-09)
+
+Canonical path is `/weatherwatch`. `/beef` 301-redirects to it and will keep
+doing so — existing references stay alive, and a 301 renders nothing, so it
+cannot prime the misreading the rename exists to stop.
+
+The joke name stays *on the page*, where the "this measures no conflict,
+sentiment, users or content" denial sits next to it. A URL travels without its
+disclaimer; a cold reader — human or model — meets `/beef` alone and concludes
+social-drama analytics. That is the whole reason for the split.
+
+Caddy orders `redir` **before** `uri`, so the obvious
+`uri strip_prefix /beef` + `redir {uri}` pairing silently sends `/beef` to
+`/weatherwatch/beef`. The route captures the tail with `path_regexp` instead —
+the same shape the DID redirects in that file already use. Verified: `/beef`,
+`/beef/`, `/beef/index.html` and `/beef/summary.json` all 301 to their
+`/weatherwatch` equivalents and follow to 200, while `/beefsteak` is untouched.
+
+Backup: `Caddyfile.bak.20260809-141216`.
 
 ## Witness declaration — gap noted, not improvised
 
@@ -128,7 +148,7 @@ as recovery machinery rather than normal operation.
 | Service user | `weatherwatch` (system, nologin, uid 997) |
 | Code | `/opt/weatherwatch` (venv at `.venv`, Python 3.10) |
 | Database | `/var/lib/weatherwatch/weatherwatch.sqlite` |
-| Static output | `/var/www/weatherwatch-beef/` |
+| Static output | `/var/www/weatherwatch/` |
 | Source endpoint | `wss://jetstream1.us-east.bsky.network/subscribe` |
 
 Exact commands:
@@ -182,7 +202,7 @@ drained in roughly 12 minutes).
 The collector and publisher share nothing but the SQLite file, and neither
 unit references the other — no `After=`, no `Requires=`. Verified: stopping
 the timer leaves collection running; stopping the collector still lets the
-publisher regenerate and `/beef` keeps serving the last report.
+publisher regenerate and `/weatherwatch` keeps serving the last report.
 
 ### Privileges
 
@@ -190,7 +210,7 @@ The collector holds only `ReadWritePaths=/var/lib/weatherwatch`. The publisher
 additionally gets `ReadWritePaths=/var/www` and `SupplementaryGroups=labelwatch`
 — a **per-unit** grant so the atomic directory swap can stage a sibling in
 `/var/www`. That group is not held by the collector and no global group
-membership was changed. `/var/www/weatherwatch-beef` is owned by
+membership was changed. `/var/www/weatherwatch` is owned by
 `weatherwatch`; no Labelwatch path was chowned or chmodded.
 
 ### Disable / rollback
@@ -203,7 +223,7 @@ systemctl daemon-reload
 ```
 
 The database, the published report and the Caddy route are all untouched by
-that: `/beef` keeps serving the last published state. Removing the route is a
+that: `/weatherwatch` keeps serving the last published state. Removing the route is a
 separate step (see the Caddy section above).
 
 ### Cursor-horizon failure posture
@@ -240,7 +260,7 @@ campaign rather than improvised here.
 ```
 
 Renders locally, refuses to ship anything matching a DID / `at://` URI / CID /
-Bluesky handle, rsyncs to `/var/www/weatherwatch-beef.incoming`, then swaps by
+Bluesky handle, rsyncs to `/var/www/weatherwatch.incoming`, then swaps by
 rename. A reader sees the whole old report or the whole new one.
 
 Verified end to end: the swap ran against the live host and left the content in

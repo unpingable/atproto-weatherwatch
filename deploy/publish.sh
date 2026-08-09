@@ -21,11 +21,11 @@
 # Env:
 #   WW_MODE      remote | local           (default remote)
 #   WW_DB        SQLite path              (default data/weatherwatch.sqlite)
-#   WW_BUILD     render dir               (default build/beef)
-#   WW_TARGET    live directory (local)   (default /var/www/weatherwatch-beef)
+#   WW_BUILD     render dir               (default build/report)
+#   WW_TARGET    live directory (local)   (default /var/www/weatherwatch)
 #   WW_SSH_HOST  target (remote)          (default root@labelwatch.neutral.zone)
 #   WW_SSH_KEY   identity (remote)        (default ~/.ssh/linode)
-#   WW_REMOTE    live directory (remote)  (default /var/www/weatherwatch-beef)
+#   WW_REMOTE    live directory (remote)  (default /var/www/weatherwatch)
 #   WW_URL       verification URL         (empty in local mode = skip HTTP check)
 #   WW_PY        python for rendering     (default python3)
 
@@ -33,16 +33,16 @@ set -euo pipefail
 
 MODE="${WW_MODE:-remote}"
 DB="${WW_DB:-data/weatherwatch.sqlite}"
-BUILD="${WW_BUILD:-build/beef}"
-TARGET="${WW_TARGET:-/var/www/weatherwatch-beef}"
+BUILD="${WW_BUILD:-build/report}"
+TARGET="${WW_TARGET:-/var/www/weatherwatch}"
 SSH_HOST="${WW_SSH_HOST:-root@labelwatch.neutral.zone}"
 SSH_KEY="${WW_SSH_KEY:-$HOME/.ssh/linode}"
-REMOTE="${WW_REMOTE:-/var/www/weatherwatch-beef}"
+REMOTE="${WW_REMOTE:-/var/www/weatherwatch}"
 PY="${WW_PY:-python3}"
 if [ "$MODE" = "local" ]; then
   URL="${WW_URL:-}"
 else
-  URL="${WW_URL:-https://labelwatch.neutral.zone/beef}"
+  URL="${WW_URL:-https://labelwatch.neutral.zone/weatherwatch}"
 fi
 SSH=(ssh -i "$SSH_KEY" -o BatchMode=yes -o ConnectTimeout=10 "$SSH_HOST")
 

@@ -1,5 +1,5 @@
 [Unit]
-Description=Weatherwatch - publish /beef every 5 minutes
+Description=Weatherwatch - publish the static report every 5 minutes
 
 [Timer]
 Unit=weatherwatch-publish.service

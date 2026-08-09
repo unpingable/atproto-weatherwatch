@@ -624,7 +624,7 @@ def test_publisher_is_a_oneshot_that_calls_the_tested_script():
     env = " ".join(d["Environment"])
     assert "WW_MODE=local" in env
     assert "WW_DB=/var/lib/weatherwatch/weatherwatch.sqlite" in env
-    assert "WW_TARGET=/var/www/weatherwatch-beef" in env
+    assert "WW_TARGET=/var/www/weatherwatch" in env
 
 
 def test_neither_unit_couples_to_the_other():

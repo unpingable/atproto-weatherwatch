@@ -195,12 +195,18 @@ narrate a ratio as if only the numerator changed, keep both components
 inspectable, and do not treat a metric as a stable baseline merely because it
 sits in a denominator. The ratio is the hint; the primitives are the receipts.
 
-**State the negative scope first.** A cold reader — human or model — arriving
-at `/beef` reads "beef" plus Bluesky plus telemetry and concludes conflict
-monitoring. This was observed: an LLM given the page confidently classified it
-as a social-drama detector and had to reason its way back out. Every disclaimer
-on the page was about *coverage* (which relay, how complete); none said what is
-not measured, so there was nothing to correct the misread with.
+**State the negative scope first.** A cold reader — human or model —
+arriving at what was then `/beef` read "beef" plus Bluesky plus telemetry and
+concluded conflict monitoring. This was observed: an LLM given the page
+confidently classified it as a social-drama detector and had to reason its way
+back out. Every disclaimer on the page was about *coverage* (which relay, how
+complete); none said what is not measured, so there was nothing to correct the
+misread with.
+
+Two fixes followed. The page now leads with the denial. And the canonical path
+became `/weatherwatch`, because **a joke needs its disclaimer adjacent and a
+URL travels alone** — `/beef` still 301s so nothing breaks, but a redirect
+renders no text and so primes nothing.
 
 Note which phrase actually caused it. "Global Beef Index" is *obviously*
 unserious — that is the joke doing its job. "Cortisol accounting" was the
