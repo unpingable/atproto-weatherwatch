@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 from weatherwatch import db, report
+from weatherwatch import derive as derive_module
 from tests.conftest import SYNTH_BASE, SYNTH_ENDPOINT, build_run
 
 FULL = {"post.create": 120, "post.create.reply": 60, "post.create.quote": 10,
@@ -657,3 +658,64 @@ def test_timer_publishes_every_five_minutes_without_catchup():
     assert "[Install]" not in _unit("weatherwatch-publish.service"), (
         "the oneshot must be timer-driven, never enabled as a service"
     )
+
+
+# --- semantic honesty of the unclassified presentation ---------------------
+
+def test_untracked_vocabulary_is_not_presented_as_observation_loss(report_db,
+                                                                   tmp_path):
+    """`unclassified` is, measurably, entirely `unclassified.collection`, and
+    that is dominated by valid records from collections we chose not to track.
+    Listing it beside parse/rejected/late read as observer failure; it is
+    product scope."""
+    out = tmp_path / "beef"
+    report.generate_report(report_db, out)
+    html_doc = read_html(out)
+
+    loss = html_doc[html_doc.index("Loss buckets"):]
+    loss = loss[:loss.index("</dd>")]
+    assert "unclassified" not in loss, (
+        "untracked vocabulary must not sit in the loss buckets line"
+    )
+    for expected in ("parse", "rejected", "late"):
+        assert expected in loss
+
+    assert "Untracked vocabulary" in html_doc
+    assert "not observation" in html_doc and "loss" in html_doc
+
+
+def test_beef_placeholder_keeps_the_joke_and_claims_no_calibration(report_db,
+                                                                   tmp_path):
+    """The unserious name is deliberate epistemic signalling: a solemn
+    construct name would imply validity the system has not earned."""
+    out = tmp_path / "beef"
+    report.generate_report(report_db, out)
+    html_doc = read_html(out)
+    assert "GLOBAL BEEF INDEX" in html_doc
+    assert "calibration pending" in html_doc
+    for solemn in ("Behavioral Turbulence", "Social Stress Index",
+                   "Network Conflict Index", "Conflict Score"):
+        assert solemn not in html_doc, f"{solemn!r} implies unearned validity"
+
+
+def test_dashboard_narrates_no_social_stories(report_db, tmp_path):
+    """The instrument reports aggregate behaviour; it must not certify the
+    joke. Humans may interpret; the telemetry does not entail."""
+    out = tmp_path / "beef"
+    report.generate_report(report_db, out)
+    html_doc = read_html(out).lower()
+    for narrative in ("morning-after", "deleting evidence", "the fight",
+                      "drama", "feud", "pile-on", "users are ",
+                      "backlash", "outrage"):
+        assert narrative not in html_doc, f"narrative leaked: {narrative!r}"
+
+
+def test_ratios_keep_their_components_inspectable(report_db, tmp_path):
+    """The denominator gets a lawyer: every ratio's numerator and denominator
+    must remain visible as primitives, so a ratio move can be attributed."""
+    out = tmp_path / "beef"
+    report.generate_report(report_db, out)
+    summary = json.loads((out / "summary.json").read_text())
+    for _label, num, den in derive_module.STANDARD_RATIOS:
+        assert num in summary["metrics"], f"{num} not inspectable"
+        assert den in summary["metrics"], f"{den} not inspectable"

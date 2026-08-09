@@ -151,6 +151,56 @@ stream. They are not calibrated against anything and carry no statistical
 warrant. There is no Global Beef Index; the dashboard shows a placeholder
 marked *calibration pending*.
 
+## Product doctrine
+
+    The joke is the disclaimer.
+    The composite is descriptive.
+    The primitives are authoritative.
+    The denominator gets a lawyer.
+
+**The joke is the disclaimer.** If a composite is ever defined it stays named
+*Global Beef Index*. The unserious name is deliberate epistemic signalling: a
+solemn construct name — Behavioral Turbulence Index, Social Stress Index —
+would imply a validated latent variable this system has not earned and cannot
+currently earn. Do not professionalise the name.
+
+**The composite is descriptive.** Any future index would be a transparent
+composite over aggregate observable behaviour, internally normalised against
+its own history. Not externally validated, not causal, not sentiment, not
+about individuals, not ground-truth conflict detection.
+
+**Two kinds of calibration, only one of which is available.** *External*
+calibration ("this number corresponds to actual beef") has no defensible
+ground truth: any corpus of remembered beef is selection-biased toward
+spectacle — quote-post pile-ons, famous arguments, public meltdowns — while
+block storms, correlated unfollows and deletion waves may carry no historical
+label at all. Supervised fitting against remembered events would build a
+*spectacle* detector and call it a conflict detector. *Internal* normalisation
+("this combination of primitives is unusual against its own regime") is
+legitimate, and is the only kind on the table.
+
+The placeholder therefore reads *calibration pending* today. If we conclude no
+principled external target exists, that becomes **uncalibrated by design** —
+"pending" must not harden into an implication that validated beef ground truth
+is merely waiting to be collected. Not changed automatically by unrelated work.
+
+**The primitives are authoritative.** A composite is a hint layer. Nobody
+should have to trust `BEEF = 73` without inspecting the aggregate series that
+produced it; the 16 primitive cards remain the receipts.
+
+**The denominator gets a lawyer.** Every ratio is a two-body system.
+`block/follow` can move because blocks rose, because follows fell, because
+both moved, or because the denominator got too small to mean anything. Never
+narrate a ratio as if only the numerator changed, keep both components
+inspectable, and do not treat a metric as a stable baseline merely because it
+sits in a denominator. The ratio is the hint; the primitives are the receipts.
+
+**Narrative restraint.** The instrument reports observable aggregate behaviour
+and bounded derived conditions. "Post deletes elevated, blocks down" must not
+become "morning-after beef" or "users are deleting evidence". Those readings
+may be funny and even right, but the telemetry does not entail them. Humans
+may make the joke; the instrument must not certify it.
+
 ## Deployment
 
 Deployed privately, dark: static output served from a separate directory by

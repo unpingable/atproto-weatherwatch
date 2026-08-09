@@ -391,6 +391,16 @@ def _section_status(runs, health_points, latest) -> str:
         f"{_esc(k)} {v}" for k, v in sorted(counts.items(), key=lambda kv: -kv[1])
     )
 
+    # `window_health.unclassified` is, measurably, entirely
+    # `unclassified.collection` — and that key is emitted almost exclusively
+    # for valid records from collections we deliberately do not track. Showing
+    # it beside parse/rejected/late implied the observer had failed 121k times
+    # when it had failed zero times. Separated, and named for what it is.
+    untracked = sum(r.unclassified for r in runs)
+    total_events = sum(r.events for r in runs)
+    untracked_pct = (f" ({100 * untracked / total_events:.2f}% of observed)"
+                     if total_events else "")
+
     saturated = any(v >= health.LAG_CLAMP_MAX_S for v in lag_vals + lag_max)
     lag_note = (
         f'<div class="note">≥{health.LAG_CLAMP_MAX_S:.0f}s means the reading '
@@ -430,8 +440,12 @@ def _section_status(runs, health_points, latest) -> str:
       <dt>Loss buckets</dt>
       <dd>parse {sum(r.parse_errors for r in runs)} ·
           rejected {sum(r.rejected_no_time_us for r in runs)} ·
-          late {sum(r.late_events for r in runs)} ·
-          unclassified {sum(r.unclassified for r in runs)}</dd>
+          late {sum(r.late_events for r in runs)}</dd>
+      <dt>Untracked vocabulary</dt>
+      <dd>{_fmt(untracked, 0)} events{untracked_pct}
+          <div class="note">Valid ATProto records from collections outside the
+          tracked metric vocabulary. This is product scope, not observation
+          loss — the observer read them fine and chose not to count them.</div></dd>
     </dl>
   </div>
 </div>
