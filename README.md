@@ -1,16 +1,30 @@
 # weatherwatch
 
-Working name, disposable. An aggregate ATProto/Bluesky event weather
-instrument: it counts network-level activity rates from a Jetstream source and
-keeps no people.
+An aggregate ATProto/Bluesky event weather instrument: it counts network-level
+activity rates from a Jetstream source and keeps no people. (The name began as
+a disposable handle; it is now load-bearing — deployed path, published URL,
+`/beef` redirect.)
 
 Design candidate: `../CANDIDATE-AGGREGATE-WEATHER-TELEMETRY.md`.
 Measured protocol behaviour: [`M0-VERIFICATION-RESULTS.md`](M0-VERIFICATION-RESULTS.md).
 
-**Status: M0–M7 implemented. Local instrument, not a service.** There is no
-HTTP server, no public endpoint, no API, and nothing here is deployed or
-announced. Run it from a terminal against a local SQLite file; the dashboard
-is static HTML generated into a directory.
+**Status: M0–M7 implemented; collector supervised under systemd; static report
+published at <https://labelwatch.neutral.zone/weatherwatch> (`/beef` 301s to
+it).** There is still no HTTP server, no API, and no read endpoint in this
+codebase — the collector writes a local SQLite file and the report is static
+HTML generated into a directory, which is then published. Run it from a
+terminal.
+
+**What the published numbers are entitled to claim.** Rates are *as observed at
+one named Jetstream instance*, not network truth. M0 falsified relay
+interchangeability (§Item 11: two same-region endpoints differing **1.61×** in
+post volume, same-endpoint self-control 1.000). The deployed collector runs on
+`jetstream1.us-east` — the higher-observing side, which makes the numbers larger
+without making them global. Local z-scores stay self-consistent against a single
+observer; **absolute rates do not**, in either direction. Observed-volume ratios
+are inter-observer comparisons, never coverage figures: there is no canonical
+denominator. See the *Decision record* in the design candidate — resolution is
+paired observers with neither privileged; second collector not yet built.
 
 ## What it does
 

@@ -20,7 +20,12 @@ Environment=PYTHONDONTWRITEBYTECODE=1
 # No --duration: run until stopped. The endpoint is written out in full and
 # must match weatherwatch.collector.DEFAULT_ENDPOINT — changing it creates a
 # hard observation seam by design, never a silent continuation.
-ExecStart=/opt/weatherwatch/.venv/bin/python -m weatherwatch.cli \
+# Console script, not `python -m`: WorkingDirectory is the repo root, and
+# `python -m` prepends cwd to sys.path ahead of the editable install, so a stray
+# `weatherwatch/` there silently shadows the real package (verified 2026-08-11).
+# A console script's sys.path[0] is its own bin dir. PYTHONSAFEPATH would also
+# fix it but is 3.11+; this host is 3.10.
+ExecStart=/opt/weatherwatch/.venv/bin/weatherwatch \
     --db /var/lib/weatherwatch/weatherwatch.sqlite \
     collect --endpoint wss://jetstream1.us-east.bsky.network/subscribe
 

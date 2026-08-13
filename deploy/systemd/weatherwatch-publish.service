@@ -17,6 +17,12 @@ WorkingDirectory=/opt/weatherwatch
 Environment=PYTHONDONTWRITEBYTECODE=1
 Environment=WW_MODE=local
 Environment=WW_PY=/opt/weatherwatch/.venv/bin/python
+# Render via the console script, not `python -m`. WorkingDirectory is the repo
+# root, and `python -m` puts cwd on sys.path ahead of the editable install, so a
+# stray package there shadows the real one. A console script's sys.path[0] is
+# its own bin dir. (PYTHONSAFEPATH would do it too, but that is 3.11+ and this
+# host is 3.10.)
+Environment=WW_CLI=/opt/weatherwatch/.venv/bin/weatherwatch
 Environment=WW_DB=/var/lib/weatherwatch/weatherwatch.sqlite
 Environment=WW_BUILD=/var/lib/weatherwatch/build/report
 Environment=WW_TARGET=/var/www/weatherwatch

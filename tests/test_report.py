@@ -550,7 +550,10 @@ def test_new_cards_carry_no_identity_and_no_new_visual_treatment(report_db, tmp_
     assert section.count('class="panel"') == 16
     assert section.count('class="metric-val"') == 16
     assert section.count('class="spark"') == 16
-    assert 'class="metric-unit">/s · ' in section
+    # The unit says "mean": these render Series.mean_rate over the whole
+    # observed interval, and a bare "/s" read as a current-rate claim.
+    assert 'class="metric-unit">/s mean · ' in section
+    assert "mean rate over the observed interval" in section
 
 
 def test_card_help_text_claims_nothing_about_relationships(report_db, tmp_path):
@@ -591,11 +594,30 @@ def _directives(text: str) -> dict[str, list[str]]:
 def test_collector_unit_runs_the_installed_collector_unbounded():
     d = _directives(_unit("weatherwatch-collector.service"))
     exec_start = d["ExecStart"][0]
-    assert exec_start.startswith("/opt/weatherwatch/.venv/bin/python")
-    assert "-m weatherwatch.cli" in exec_start
+    assert exec_start.startswith("/opt/weatherwatch/.venv/bin/weatherwatch")
+    # Console script, NOT `python -m`. WorkingDirectory is the repo root, and
+    # `python -m` prepends cwd to sys.path ahead of the editable install, so a
+    # stray weatherwatch/ package there silently wins (reproduced 2026-08-11
+    # after a mis-aimed rsync put one at /opt/weatherwatch). A console script's
+    # sys.path[0] is its own bin dir. PYTHONSAFEPATH would also close it but is
+    # 3.11+; the serving host is 3.10.
+    assert "-m weatherwatch.cli" not in exec_start, (
+        "`python -m` from WorkingDirectory lets a stray package shadow the "
+        "installed one — use the console script"
+    )
     assert "--db /var/lib/weatherwatch/weatherwatch.sqlite" in exec_start
     assert "collect" in exec_start
     assert "--duration" not in exec_start, "continuous means run until stopped"
+
+
+def test_publish_unit_renders_via_console_script_not_dash_m():
+    # publish.sh falls back to `python -m weatherwatch.cli` when WW_CLI is
+    # unset, which is correct for local/offline runs but unsafe from the
+    # deployed WorkingDirectory. Same shadowing hazard as the collector.
+    d = _directives(_unit("weatherwatch-publish.service"))
+    assert "WW_CLI=/opt/weatherwatch/.venv/bin/weatherwatch" in d["Environment"], (
+        "the deployed publisher must render via the console script"
+    )
 
 
 def test_collector_unit_uses_the_repo_endpoint():

@@ -28,6 +28,7 @@
 #   WW_REMOTE    live directory (remote)  (default /var/www/weatherwatch)
 #   WW_URL       verification URL         (empty in local mode = skip HTTP check)
 #   WW_PY        python for rendering     (default python3)
+#   WW_CLI       console-script path      (preferred over WW_PY; see below)
 #   WW_PUBLIC_URL canonical URL; only when set are share-card
 #                 meta tags + og-card.png emitted
 
@@ -41,6 +42,25 @@ SSH_HOST="${WW_SSH_HOST:-root@labelwatch.neutral.zone}"
 SSH_KEY="${WW_SSH_KEY:-$HOME/.ssh/linode}"
 REMOTE="${WW_REMOTE:-/var/www/weatherwatch}"
 PY="${WW_PY:-python3}"
+CLI="${WW_CLI:-}"
+
+# Prefer the installed console script over `python -m` when one is configured.
+#
+# `python -m pkg` prepends the *current working directory* to sys.path, so any
+# stray `weatherwatch/` directory sitting in WorkingDirectory silently shadows
+# the installed package — the deployed units run from /opt/weatherwatch, which
+# is exactly where a mis-aimed rsync lands. Verified 2026-08-11: a stray package
+# in cwd wins over the editable install. A console script's sys.path[0] is its
+# own bin directory, so cwd never enters the search path.
+#
+# PYTHONSAFEPATH / `python -P` would also fix this but are 3.11+; the serving
+# host is 3.10. Falls back to `python -m` so local and offline runs are
+# unaffected.
+if [ -n "$CLI" ]; then
+  RENDER=("$CLI")
+else
+  RENDER=("$PY" -m weatherwatch.cli)
+fi
 if [ "$MODE" = "local" ]; then
   URL="${WW_URL:-}"
 else
@@ -50,7 +70,7 @@ SSH=(ssh -i "$SSH_KEY" -o BatchMode=yes -o ConnectTimeout=10 "$SSH_HOST")
 
 if [ "${1:-}" != "--skip-generate" ]; then
   echo "==> Rendering from $DB"
-  "$PY" -m weatherwatch.cli --db "$DB" report --output "$BUILD" \
+  "${RENDER[@]}" --db "$DB" report --output "$BUILD" \
       ${WW_PUBLIC_URL:+--public-url "$WW_PUBLIC_URL"}
 fi
 

@@ -537,10 +537,13 @@ def _section_weather(series_map: dict[str, Series]) -> str:
 <div class="panel">
   <div class="metric-name"{title}>{_esc(label)}</div>
   <div class="metric-val">{_fmt(s.mean_rate, 2)}
-    <span class="metric-unit">/s · {_fmt(s.total, 0)} total</span></div>
+    <span class="metric-unit">/s mean · {_fmt(s.total, 0)} total</span></div>
   {_sparkline(pts)}
 </div>""")
     return ("<h2>B · Activity weather</h2>"
+            '<p class="sub">Each figure is the <strong>mean rate over the '
+            'observed interval</strong>, not the current rate. The sparkline '
+            'shows the per-window series it averages.</p>'
             f'<div class="grid g3">{"".join(cards)}</div>')
 
 
@@ -683,6 +686,14 @@ not affect. Aggregate activity observed from
 interval. Counts describe what this endpoint delivered; they are not a claim
 about the network's total activity, and no relay is authoritative or
 complete.</p>
+<p class="sub warn">This is measured, not hypothetical. A controlled probe
+(2026-08-08) compared two same-region public Jetstream endpoints over one
+interval and found their post volumes differing by <strong>~1.61&times;</strong>,
+with a same-endpoint self-control of 1.000 — so relays are demonstrably not
+interchangeable. Rates here are <strong>as observed at
+{_esc(latest.endpoint)}</strong> and are not estimates of total-network
+activity. That ratio is an <em>inter-observer comparison</em>, not a coverage
+or completeness figure: neither observer has a canonical denominator.</p>
 {_section_status(runs, health_points, latest, metric_totals)}
 {_section_weather(series_map)}
 {_section_conditions(conn, run_ids, series_map, totals_series)}
@@ -763,6 +774,13 @@ def _summary_json(runs, latest, series_map, totals_series, health_points,
             "interpolated across them.",
             "Rates divide by observed duration, not nominal window width.",
             "No relay is treated as complete or authoritative.",
+            "Rates are as observed at this endpoint and are not estimates of "
+            "total-network activity. A controlled probe (2026-08-08) compared "
+            "two same-region public Jetstream endpoints over one interval and "
+            "found post volumes differing by ~1.61x (same-endpoint "
+            "self-control 1.000): relays are not interchangeable.",
+            "That ratio is an inter-observer comparison, not a coverage or "
+            "completeness figure: there is no canonical denominator.",
         ],
     }
 
