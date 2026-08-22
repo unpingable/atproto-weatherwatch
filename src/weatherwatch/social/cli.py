@@ -174,6 +174,89 @@ def cmd_report(args) -> int:
     return 0
 
 
+def cmd_field(args) -> int:
+    """Build the climatology and seal one observation per window."""
+    from .field import observation as fobs
+    from .field import run as frun
+    from .field import viz as fviz
+
+    since_us, until_us = _bounds(args)
+    wconn = weather_db.connect(args.db)
+    weather_db.init_db(wconn)
+    run_ids = ([args.run] if args.run
+               else query.compatible_runs(
+                   wconn, args.endpoint or _default_endpoint(wconn)))
+    if not run_ids:
+        print("no observation runs to read", file=sys.stderr)
+        return 2
+    try:
+        points, clim, obs, cands = frun.build_all(
+            wconn, run_ids, since_us, until_us,
+            endpoint=args.endpoint or _default_endpoint(wconn))
+    except query.QueryTooLarge as e:
+        print(f"range too large: {e}\nPass --last (e.g. --last 7d).",
+              file=sys.stderr)
+        return 2
+    finally:
+        wconn.close()
+
+    if clim is None:
+        print("no windows in range", file=sys.stderr)
+        return 2
+
+    econn = store.connect(args.social_db)
+    store.init_db(econn)
+    fobs.init(econn)
+    now = timeutil.now_iso()
+    econn.execute("BEGIN")
+    try:
+        fobs.save_climatology(econn, clim, now)
+        n = fobs.save_observations(econn, obs, now)
+        econn.execute("COMMIT")
+    except Exception:
+        econn.execute("ROLLBACK")
+        raise
+
+    out = {
+        "observations": n,
+        "climatology_id": clim.climatology_id,
+        "days": clim.n_days,
+        "weeks": clim.n_weeks,
+        "hour_of_week_supported": clim.hour_of_week_supported,
+        "support": {k: v.support for k, v in sorted(clim.quantities.items())},
+    }
+    from .field.climatology import candidate_summary
+    out["candidates"] = candidate_summary(points, clim, cands)
+    if args.output:
+        # Scoped to this run's climatology: an observation is only meaningful
+        # against the baseline it was scored with.
+        docs, total_obs = fobs.load_observations(
+            econn, climatology_id=clim.climatology_id)
+        cdoc = fobs.load_climatology(econn, clim.climatology_id)
+        path = Path(args.output)
+        path.mkdir(parents=True, exist_ok=True)
+        from .field.conditions import CRITERIA, STATE_LABEL, assess
+        cond = assess(docs, cdoc).as_dict()
+        cond["criteria_table"] = [
+            (STATE_LABEL[s2], text) for s2, text in CRITERIA]
+        page = fviz.render_page(
+            docs, cdoc,
+            {"generated_at": now, "observations_in_store": total_obs},
+            cond)
+        out["conditions"] = {k: cond[k] for k in
+                             ("state", "headline", "confidence",
+                              "persistence_windows")}
+        (path / "index.html").write_text(page, encoding="utf-8")
+        out["page"] = str(path / "index.html")
+        out["rendered_from_storage"] = len(docs)
+        out["observations_in_store"] = total_obs
+        if total_obs > len(docs):
+            out["truncated_oldest"] = total_obs - len(docs)
+    econn.close()
+    print(json.dumps(out, indent=2))
+    return 0
+
+
 def cmd_custody(args) -> int:
     """Sink health: what was seen, stored, skipped and dropped."""
     conn = store.connect(args.social_db)
@@ -249,3 +332,14 @@ def register(sub, default_social_db) -> None:
 
     c = _leaf("custody", "edge sink health and volume")
     c.set_defaults(fn=cmd_custody)
+
+    f = _leaf("field", "build the social-weather climatology and observations")
+    f.add_argument("--run", default=None)
+    f.add_argument("--endpoint", default=None)
+    f.add_argument("--since", default=None)
+    f.add_argument("--until", default=None)
+    f.add_argument("--last", default=None, help="e.g. 7d")
+    f.add_argument("--output", default=None,
+                   help="render the station page into this directory, from "
+                        "STORED observations rather than from memory")
+    f.set_defaults(fn=cmd_field)

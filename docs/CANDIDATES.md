@@ -231,6 +231,38 @@ What it touches, none of it decided:
 Cheap to do, and worth doing before anything else starts linking to the path
 form. Not a prerequisite for anything currently shipped.
 
+### In progress, 2026-08-22
+
+**DNS provisioned** by the operator; not yet propagated at the time of
+writing (`weatherwatch.neutral.zone` did not resolve from the workstation or
+from the serving host).
+
+**Caddy site block added and live.** Appended to
+`/home/jbeck/atproto/Caddyfile`, backed up first as
+`Caddyfile.bak.20260822-222533` per host convention, `caddy validate` run
+*before* the reload because the file carries seven sites and a malformed
+config takes all of them down. Post-reload all seven were re-checked and
+answer as before. `/beef` is kept as an alias on the new host, redirecting to
+`/`.
+
+**Robots posture carried over deliberately, not inherited.** The new host
+keeps `X-Robots-Tag: noindex, nofollow, noarchive`. A siloed path nothing
+links to and a bare hostname are different exposure decisions; this one is
+still open, and carrying the conservative setting forward is not the same as
+choosing.
+
+**Redirect staged, not applied.** `/weatherwatch` and `/beef` under
+`labelwatch.neutral.zone` still serve. Redirecting them to a hostname that
+does not resolve yet would take the published report offline, so the flip
+waits until the new host answers 200 on its own certificate. Applying it means
+replacing the `@weatherwatch handle` block with a
+`redir @weatherwatch https://weatherwatch.neutral.zone{re...} 301` and leaving
+`@beef_legacy` pointing at the new host.
+
+Remaining after the flip: decide the robots posture, and decide whether
+`summary.json` / `social.json` consumers need the old path kept alive
+indefinitely or on a sunset.
+
 ---
 
 ## C6 — Conversational storm detection, and the map that has no substrate
