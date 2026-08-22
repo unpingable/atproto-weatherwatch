@@ -126,3 +126,73 @@ improvised during deployment work.
 Measured 2026-08-09: a **4.41 h** cursor replayed instantly on
 jetstream1.us-east, extending M0's verified ≥1 h horizon. The point at which
 the horizon actually ends is still unknown.
+
+---
+
+## C4 — The report has no window, and it just hit its first ceiling
+
+**Status:** candidate. A **stopgap is already deployed**; the actual decision
+is not made. Filed 2026-08-22 during social-lane activation.
+
+### What happened
+
+Continuous 60 s collection crossed **20,000 span windows** (observed plus gap)
+and `weatherwatch-publish` began failing:
+
+```
+QueryTooLarge: 20006 windows requested (max 20000). Narrow the range:
+silently truncating would turn an incomplete series into one that looks complete.
+```
+
+Last successful render: 19,821 windows at 17:34Z. The guard is correct — it
+exists so an accidental unbounded query cannot quietly truncate a series into
+one that merely *looks* complete — but it was written for accidental callers,
+and the report asks for the whole observed interval deliberately and discloses
+that interval on the page.
+
+Note the trigger is the **span**, not the row count: gaps count toward it, so
+13,730 s of accumulated gap arrived ahead of the observed windows.
+
+### The stopgap that is deployed
+
+`report.REPORT_MAX_WINDOWS = 200_000`, passed explicitly to
+`query.total_events_series` and `query.series`. This buys roughly **139 days**
+at 60 s. It is a repair to a live outage, not a design, and it is deliberately
+a named constant with the reasoning attached rather than a quiet bump to the
+library default — the default still protects every other caller.
+
+### The measurement that says a stopgap is not enough
+
+Rendered at ~20,000 windows, on the deployed database:
+
+| | bytes |
+|---|---|
+| `index.html`, **without** the social section | **10,158,030** |
+| `index.html`, with it | 10,397,008 |
+| the social section alone | 237,499 (2.3%) |
+| `summary.json` | 3,328,854 |
+
+66,792 `<rect>` elements, essentially all of them the observation-health strip
+and the sparklines drawing one mark per window. The page grows without bound
+in the window count, and the social section is not why. A 10 MB dashboard is a
+defect whatever is in it.
+
+### What would actually fix it — none of it chosen
+
+* a **trailing window** for the page (say 7 or 14 days), with the full history
+  still reachable in `summary.json`;
+* **coarser buckets for the long tail** — minute resolution recently, hourly
+  beyond some age — which changes what the sparklines mean and needs saying
+  on the page;
+* **downsampling the marks** rather than the data: one rect per rendered pixel
+  column instead of one per window. Cheapest, changes no stated figure, and
+  does not answer the growth question.
+
+Not chosen here because every option changes what the published page *claims*
+about its own interval, and that is a product decision rather than a repair.
+Whoever takes it should also decide whether `summary.json` follows the page's
+window or keeps carrying everything.
+
+**Do not let the 200,000 sit here silently.** It is a ceiling with a date on
+it: at 60 s windows it is reached around **2027-01**, and the failure mode is
+the publish timer going red again.

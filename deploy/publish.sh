@@ -36,6 +36,12 @@ set -euo pipefail
 
 MODE="${WW_MODE:-remote}"
 DB="${WW_DB:-data/weatherwatch.sqlite}"
+# Episode store for the report's social section. Aggregate-tier episodes only
+# reach the page; they are derived from the identity-free minute counters and
+# carry no actor or target. Unset means the section renders as "no episode
+# store configured" rather than disappearing -- absence of a section would be
+# indistinguishable from absence of episodes.
+SOCIAL_DB="${WW_SOCIAL_DB:-}"
 BUILD="${WW_BUILD:-build/report}"
 TARGET="${WW_TARGET:-/var/www/weatherwatch}"
 SSH_HOST="${WW_SSH_HOST:-root@labelwatch.neutral.zone}"
@@ -71,6 +77,7 @@ SSH=(ssh -i "$SSH_KEY" -o BatchMode=yes -o ConnectTimeout=10 "$SSH_HOST")
 if [ "${1:-}" != "--skip-generate" ]; then
   echo "==> Rendering from $DB"
   "${RENDER[@]}" --db "$DB" report --output "$BUILD" \
+      ${SOCIAL_DB:+--social-db "$SOCIAL_DB"} \
       ${WW_PUBLIC_URL:+--public-url "$WW_PUBLIC_URL"}
 fi
 
@@ -79,10 +86,16 @@ fi
 # Refuse to publish anything carrying user identity. The generator cannot
 # produce it, but this is the last gate before bytes leave the machine and it
 # costs nothing to keep.
+# The `a:[0-9a-f]{12}` arm covers salted actor tokens, which the social lane
+# puts on edge-tier findings. Those findings are excluded from the published
+# projection by detector allowlist, so this arm should never fire — which is
+# exactly why it is here: a gate that only checks what you expect to go wrong
+# is not a gate.
+IDENT_RE="did:(plc|web|key):|at://|bafy[a-z0-9]{10,}|[a-z0-9-]+\.bsky\.(social|app)|\ba:[0-9a-f]{12}\b"
 echo "==> Privacy gate"
-if grep -rEq "did:(plc|web|key):|at://|bafy[a-z0-9]{10,}|[a-z0-9-]+\.bsky\.(social|app)" "$BUILD"; then
+if grep -rEq "$IDENT_RE" "$BUILD"; then
   echo "!! identity-shaped value found in $BUILD — refusing to publish" >&2
-  grep -rEno "did:(plc|web|key):|at://|bafy[a-z0-9]{10,}|[a-z0-9-]+\.bsky\.(social|app)" "$BUILD" >&2 | head
+  grep -rEno "$IDENT_RE" "$BUILD" >&2 | head
   exit 1
 fi
 echo "    clean"

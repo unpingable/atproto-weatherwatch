@@ -26,6 +26,19 @@ are inter-observer comparisons, never coverage figures: there is no canonical
 denominator. See the *Decision record* in the design candidate — resolution is
 paired observers with neither privileged; second collector not yet built.
 
+## Social episode sensors (`weatherwatch social`)
+
+An analysis layer over this same observation lane: it segments the buckets
+already persisted here into **episodes** — block bursts, like/repost storms,
+lulls — and, behind an opt-in edge sink, adds concentration, overlap,
+synchronisation and account-lifecycle co-occurrence. The subject of every
+detection is the episode, never an account.
+
+The weather lane is unchanged and still keeps no people. Edge custody is off
+by default, writes a separate database, and is not enabled in the deployed
+collector. See [`src/weatherwatch/social/README.md`](src/weatherwatch/social/README.md)
+and [`BOUNDARIES.md`](src/weatherwatch/social/BOUNDARIES.md).
+
 ## What it does
 
 ```

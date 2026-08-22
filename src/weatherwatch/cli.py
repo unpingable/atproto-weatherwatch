@@ -7,6 +7,8 @@
     weatherwatch ratios
     weatherwatch correlate post.create.quote block.create
     weatherwatch report --output DIR
+    weatherwatch social detect --last 24h
+    weatherwatch social report --output DIR
 
 Local instrument. No HTTP server, no public surface.
 """
@@ -25,6 +27,33 @@ from pathlib import Path
 from . import COLLECTOR_VERSION, db, derive, query, read, timeutil
 from .accumulator import DEFAULT_BUCKET_WIDTH_S
 from .collector import DEFAULT_ENDPOINT, KNOWN_ENDPOINTS, Collector
+
+
+LOG = logging.getLogger("weatherwatch.cli")
+
+from .social.config import RECEIPT_FILENAME as SOCIAL_RECEIPT_FILENAME
+from .social.config import RECEIPT_META_KEY as SOCIAL_RECEIPT_META_KEY
+
+
+def _record_social_receipt(conn, cfg, run_id: str, data_dir: Path) -> dict:
+    """Record whether edge custody ran, in the weather DB and on disk.
+
+    The `meta` row holds the *published* receipt -- state, scope, horizon, no
+    filesystem path -- because the report renders it and the report gets
+    published. The file beside the database holds the full one.
+    """
+    receipt = cfg.public_receipt(run_id)
+    db.set_meta(conn, SOCIAL_RECEIPT_META_KEY, json.dumps(receipt,
+                                                          sort_keys=True))
+    try:
+        data_dir.mkdir(parents=True, exist_ok=True)
+        (data_dir / SOCIAL_RECEIPT_FILENAME).write_text(
+            json.dumps(cfg.receipt(run_id), indent=2, sort_keys=True),
+            encoding="utf-8")
+    except OSError:
+        LOG.warning("could not write %s; the meta row still holds the receipt",
+                    SOCIAL_RECEIPT_FILENAME)
+    return receipt
 
 
 def _setup_logging(verbose: bool) -> None:
@@ -56,11 +85,50 @@ async def _run_collect(args) -> int:
 
     conn = db.connect(args.db)
     db.init_db(conn)
+
+    # Activation is resolved before the collector exists, and the decision is
+    # recorded whether it came out on or off. A flag that only records itself
+    # when it is on is an advertisement, not a receipt.
+    from .social.config import ConfigError, from_args as social_from_args
+    try:
+        social_cfg = social_from_args(args)
+    except ConfigError as e:
+        print(f"social sink configuration refused: {e}", file=sys.stderr)
+        return 2
+
+    social_sink = None
+    if social_cfg.enabled:
+        from .social.sink import SocialSink
+        social_sink = SocialSink.open(
+            social_cfg.db_path, run_id="pending",
+            collections=social_cfg.collection_set,
+            retention_us=social_cfg.retention_us,
+            batch_rows=social_cfg.batch_rows,
+        )
+
     collector = Collector(
         conn=conn, endpoint=endpoint, duration_s=duration,
         bucket_width=args.bucket_width,
         checkpoint_path=Path(args.db).parent / "baseline_checkpoint.json",
+        social_sink=social_sink,
     )
+    if social_sink is not None:
+        # The sink shares the collector's run identity so custody and weather
+        # rows from one session can be lined up without a second run table.
+        social_sink.writer.run_id = collector.run_id
+
+    # Written by weatherwatch about its own configuration -- never by the
+    # social package, which must not touch this database at all. It is a
+    # boolean plus scope, carries no edge and no identity, and it is written
+    # on every run so the OFF case is on the record too.
+    _record_social_receipt(conn, social_cfg, collector.run_id,
+                           Path(args.db).parent)
+    LOG.info("social edge custody %s%s",
+             "ON" if social_cfg.enabled else "OFF",
+             (f" -> {social_cfg.db_path} "
+              f"collections={sorted(social_cfg.collections)} "
+              f"retention={social_cfg.retention}")
+             if social_cfg.enabled else "")
 
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):
@@ -217,7 +285,9 @@ def _cmd_report(args) -> int:
     conn = db.connect(args.db)
     run_ids = [args.run] if args.run else None
     stats = report.generate_report(conn, args.output, run_ids=run_ids,
-                                   public_url=args.public_url)
+                                   public_url=args.public_url,
+                                   social_db=args.social_db,
+                                   social_window=args.social_window)
     conn.close()
     print(json.dumps(stats, indent=2))
     return 0
@@ -235,6 +305,21 @@ def main(argv: list[str] | None = None) -> int:
                    help=f"URL or one of {sorted(KNOWN_ENDPOINTS)}")
     p.add_argument("--duration", default=None, help="e.g. 30m, 1h, 600s")
     p.add_argument("--bucket-width", type=int, default=DEFAULT_BUCKET_WIDTH_S)
+    # Edge custody is opt-in and off by default. Turning it on changes this
+    # process's retention posture -- see src/weatherwatch/social/BOUNDARIES.md.
+    p.add_argument("--social-edges", action="store_true",
+                   help="ALSO retain actor->subject edges to a separate store. "
+                        "Changes the retention posture of this run. Equivalent "
+                        "to WW_SOCIAL_EDGES=1; the flag wins over the env var.")
+    p.add_argument("--social-db", default=None,
+                   help="edge store path (env WW_SOCIAL_DB)")
+    p.add_argument("--social-collections", default=None,
+                   help="comma list of collections to retain (env "
+                        "WW_SOCIAL_COLLECTIONS). likes/reposts are high "
+                        "volume: ~216/s and ~34/s as observed.")
+    p.add_argument("--social-retention", default=None,
+                   help="prune edges older than this on flush "
+                        "(env WW_SOCIAL_RETENTION)")
 
     p = sub.add_parser("runs", help="list observation runs")
     p.add_argument("--limit", type=int, default=20)
@@ -264,11 +349,25 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("report", help="generate the static dashboard")
     p.add_argument("--output", required=True)
     p.add_argument("--run", default=None)
+    p.add_argument("--social-db", default=os.environ.get("WW_SOCIAL_DB"),
+                   help="episode store to project into the report's social "
+                        "section. Only aggregate-tier episodes are published; "
+                        "they are derived from the identity-free counters and "
+                        "carry no actor or target.")
+    p.add_argument("--social-window", default=os.environ.get(
+                       "WW_SOCIAL_WINDOW", "48h"),
+                   help="how far back the social section reaches (default "
+                        "48h). The window is stated on the page; it is not a "
+                        "silent cap.")
     p.add_argument("--public-url", default=os.environ.get("WW_PUBLIC_URL"),
                    help="canonical URL of the published report. Only when set "
                         "are share-card meta tags emitted; without it the page "
                         "is entirely self-contained.")
     p.set_defaults(fn=_cmd_report)
+
+    from .social.cli import register as _register_social
+    from .social.store import DEFAULT_EDGE_DB_PATH
+    _register_social(sub, DEFAULT_EDGE_DB_PATH)
 
     p = sub.add_parser("version")
     p.set_defaults(fn=lambda a: (print(COLLECTOR_VERSION), 0)[1])

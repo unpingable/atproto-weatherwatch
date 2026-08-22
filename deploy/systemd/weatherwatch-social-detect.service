@@ -1,0 +1,39 @@
+[Unit]
+# Episode detection over the aggregate tier. Reads the weather database and
+# writes sealed DetectionEnvelopes into the episode store. It retains nothing
+# new: aggregate episodes are derived from the identity-free minute counters,
+# so this unit runs the same whether or not edge custody is enabled.
+#
+# Deliberately NOT After=/Requires= the collector: detection reads whatever
+# has been committed and is correct on a stale database, so a collector
+# restart must never take detection with it.
+Description=Weatherwatch - detect social episodes from observed history
+Documentation=file:/opt/weatherwatch/src/weatherwatch/social/README.md
+
+[Service]
+Type=oneshot
+User=weatherwatch
+Group=weatherwatch
+WorkingDirectory=/opt/weatherwatch
+Environment=PYTHONDONTWRITEBYTECODE=1
+# A 24h range re-observes episodes already in the store. That is intended and
+# idempotent at the read model: storage keeps every sealed detection as the
+# audit trail, and the projection collapses them to one row per episode_id.
+# Re-detecting the recent past also lets an episode that was still open at the
+# last pass be sealed with its full extent.
+ExecStart=/opt/weatherwatch/.venv/bin/weatherwatch \
+    --db /var/lib/weatherwatch/weatherwatch.sqlite \
+    social detect --tiers aggregate --last 24h \
+    --social-db /var/lib/weatherwatch/social.sqlite
+
+Nice=10
+IOSchedulingClass=idle
+ProtectSystem=strict
+ReadWritePaths=/var/lib/weatherwatch
+ProtectHome=true
+PrivateTmp=true
+NoNewPrivileges=true
+CapabilityBoundingSet=
+RestrictSUIDSGID=true
+StandardOutput=journal
+StandardError=journal

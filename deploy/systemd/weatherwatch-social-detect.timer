@@ -1,0 +1,16 @@
+[Unit]
+Description=Weatherwatch - periodic social episode detection
+Documentation=file:/opt/weatherwatch/src/weatherwatch/social/README.md
+
+[Timer]
+# Hourly. The published section covers a 48h window, so an hourly pass keeps
+# the page's newest episodes at most an hour behind the stream while costing
+# one bounded query per run. Detection is not latency-critical: an episode is
+# a statement about an interval that has already closed.
+OnBootSec=10min
+OnUnitActiveSec=1h
+AccuracySec=1min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

@@ -650,7 +650,8 @@ TOTAL_EVENTS_METRIC = "_events_total"
 
 
 def total_events_series(
-    conn: sqlite3.Connection, run_ids: list[str], densify: bool = True
+    conn: sqlite3.Connection, run_ids: list[str], densify: bool = True,
+    max_points: int = 20_000,
 ) -> Series:
     """All observed events per window, from `window_health.events_seen`.
 
@@ -660,7 +661,8 @@ def total_events_series(
     double-counts (a reply post emits both `post.create` and
     `post.create.reply`).
     """
-    base = series(conn, run_ids, TOTAL_EVENTS_METRIC, densify=densify)
+    base = series(conn, run_ids, TOTAL_EVENTS_METRIC, densify=densify,
+                  max_points=max_points)
     points = tuple(
         WindowPoint(
             bucket_start=p.bucket_start, bucket_width=p.bucket_width,

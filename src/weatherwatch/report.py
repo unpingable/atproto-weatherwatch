@@ -28,8 +28,31 @@ import shutil
 import sqlite3
 from pathlib import Path
 
-from . import COLLECTOR_VERSION, derive, health, query, timeutil
+from . import COLLECTOR_VERSION, db, derive, health, query, timeutil
 from .query import Series, WindowPoint
+from .social import section as _social_section
+from .social import api as _social_api
+from .social import projection as _social_projection
+from .social.config import RECEIPT_META_KEY as _SOCIAL_RECEIPT_KEY
+
+#: Window budget for the report's own queries.
+#:
+#: `query.series` caps a densified range at 20,000 windows so an *accidental*
+#: unbounded query cannot silently truncate a series into one that merely
+#: looks complete. The report's range is not accidental: it asks for the whole
+#: observed interval on purpose, and it discloses that interval, its gaps and
+#: its coverage on the page. So it raises the cap for itself rather than
+#: narrowing what it reports.
+#:
+#: This is a repair, not a design, and it is filed as such: see
+#: `docs/CANDIDATES.md` C4 for the measurements and the options. Continuous
+#: 60s collection crossed 20,000
+#: *span* windows (observed plus gap) on 2026-08-22 and publication began
+#: failing with QueryTooLarge; the last good render was 19,821 windows. The
+#: value below buys ~139 days at 60s. Past that the page needs an actual
+#: windowing decision -- a trailing interval, or coarser buckets for the long
+#: tail -- because an unboundedly growing dashboard is a defect either way.
+REPORT_MAX_WINDOWS = 200_000
 
 # --- what to show ----------------------------------------------------------
 
@@ -218,7 +241,7 @@ footer { margin-top:34px; padding-top:14px; border-top:1px solid var(--rule);
 .beef { text-align:center; padding:20px; color:var(--muted); }
 .beef .big { font-size:17px; letter-spacing:.13em; color:var(--ink);
              opacity:.55; }
-"""
+""" + _social_section.STYLE_ADDITION
 
 HATCH_DEF = """
 <defs>
@@ -649,7 +672,7 @@ def _section_health_strip(health_points) -> str:
 
 def _section_beef() -> str:
     return """
-<h2>E · Beef conditions</h2>
+<h2>F · Beef conditions</h2>
 <div class="panel beef">
   <div class="big">GLOBAL BEEF INDEX</div>
   <div style="margin-top:6px">undefined — calibration not assumed</div>
@@ -664,7 +687,7 @@ def _section_beef() -> str:
 
 def _build_html(conn, run_ids, runs, latest, series_map, totals_series,
                 health_points, metric_totals, generated_at,
-                public_url) -> str:
+                public_url, social_projection=None) -> str:
     return f"""<!doctype html>
 <html lang="en"><head>
 <meta charset="utf-8">
@@ -698,6 +721,7 @@ or completeness figure: neither observer has a canonical denominator.</p>
 {_section_weather(series_map)}
 {_section_conditions(conn, run_ids, series_map, totals_series)}
 {_section_health_strip(health_points)}
+{_social_section.render(social_projection) if social_projection else ""}
 {_section_beef()}
 <footer>
 Generated {_esc(generated_at)} · collector v{_esc(COLLECTOR_VERSION)} ·
@@ -785,12 +809,46 @@ def _summary_json(runs, latest, series_map, totals_series, health_points,
     }
 
 
+def _load_social(conn, social_db, window_s: int | None = None) -> "_social_projection.SocialProjection":
+    """Build the read model. The report never queries the episode store itself.
+
+    A missing store, an empty one, or a detection run that never happened all
+    resolve to an unavailable projection rather than an error: the section
+    still renders, and still states the retention posture, because "nothing
+    was detected" and "nothing was enabled" are different facts and a reader
+    is entitled to both.
+    """
+    raw = db.get_meta(conn, _SOCIAL_RECEIPT_KEY)
+    receipt = None
+    if raw:
+        try:
+            receipt = json.loads(raw)
+        except (TypeError, ValueError):
+            receipt = None
+    if social_db is None:
+        return _social_projection.SocialProjection(
+            audience=_social_projection.AUDIENCE_PUBLIC, available=False,
+            reason="no episode store configured for this report",
+            source={"audience": _social_projection.AUDIENCE_PUBLIC,
+                    "detector_allowlist":
+                        sorted(_social_projection.PUBLIC_DETECTORS)},
+            sink_receipt=receipt)
+    since = None
+    if window_s:
+        since = timeutil.us_to_iso(timeutil.now_us() - window_s * 1_000_000)
+    return _social_projection.load(
+        social_db, audience=_social_projection.AUDIENCE_PUBLIC,
+        since=since, sink_receipt=receipt)
+
+
 def generate_report(
     conn: sqlite3.Connection,
     out_dir: str | Path,
     run_ids: list[str] | None = None,
     now: datetime.datetime | None = None,
     public_url: str | None = None,
+    social_db: str | Path | None = None,
+    social_window: str | None = "48h",
 ) -> dict:
     """Render the dashboard into `out_dir`, atomically.
 
@@ -812,19 +870,24 @@ def generate_report(
     runs = [query.run_summary(conn, r) for r in run_ids]
     latest = max(runs, key=lambda r: r.started_at)
     health_points = query.observation_window_health(conn, run_ids)
-    totals_series = query.total_events_series(conn, run_ids)
+    totals_series = query.total_events_series(
+        conn, run_ids, max_points=REPORT_MAX_WINDOWS)
 
     series_map: dict[str, Series] = {}
     wanted = {k for spec in PRIMITIVES for k in _metric_keys(spec)}
     wanted |= {n for _, n, _ in derive.STANDARD_RATIOS}
     wanted |= {d for _, _, d in derive.STANDARD_RATIOS}
     for metric in sorted(wanted):
-        series_map[metric] = query.series(conn, run_ids, metric)
+        series_map[metric] = query.series(
+            conn, run_ids, metric, max_points=REPORT_MAX_WINDOWS)
 
     metric_totals = query.metric_totals(conn, run_ids)
+    window_s = int(timeutil.parse_duration(social_window)) if social_window \
+        else None
+    social = _load_social(conn, social_db, window_s)
     html_doc = _build_html(conn, run_ids, runs, latest, series_map,
                            totals_series, health_points, metric_totals,
-                           generated_at, public_url)
+                           generated_at, public_url, social)
     summary = _summary_json(runs, latest, series_map, totals_series,
                             health_points, generated_at)
 
@@ -835,6 +898,9 @@ def generate_report(
     (tmp / "index.html").write_text(html_doc, encoding="utf-8")
     (tmp / "summary.json").write_text(json.dumps(summary, indent=2,
                                                  default=str), encoding="utf-8")
+    # Static read side, beside the one that already exists. `build()` asserts
+    # identity-freedom once more before these bytes are written.
+    _social_api.write(social, tmp, generated_at=generated_at)
     if public_url and SHARE_IMAGE.exists():
         shutil.copy(SHARE_IMAGE, tmp / "og-card.png")
 
@@ -861,4 +927,8 @@ def generate_report(
         "metrics": len(series_map),
         "html_bytes": len(html_doc.encode("utf-8")),
         "generated_at": generated_at,
+        "social_episodes": len(social.episodes),
+        "social_available": social.available,
+        "social_sink_enabled": bool(
+            (social.sink_receipt or {}).get("enabled")),
     }

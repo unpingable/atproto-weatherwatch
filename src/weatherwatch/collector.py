@@ -90,12 +90,18 @@ class Collector:
         duration_s: float | None = None,
         bucket_width: int = DEFAULT_BUCKET_WIDTH_S,
         checkpoint_path: Path | None = None,
+        social_sink=None,
     ):
         self.conn = conn
         self.endpoint = endpoint
         self.duration_s = duration_s
         self.bucket_width = bucket_width
         self.checkpoint_path = checkpoint_path
+        #: Optional second sink on the parsed-message path (weatherwatch.social).
+        #: None in every default configuration, including the deployed one: the
+        #: weather lane's "keeps no people" guarantee is a property of what runs,
+        #: not only of what is written here. See social/BOUNDARIES.md.
+        self.social_sink = social_sink
 
         self.run_id = new_run_id()
         self.health = ObservationHealth()
@@ -196,6 +202,11 @@ class Collector:
             snap = self._stamp_health(w)
         cursor = Accumulator.commit_cursor_for(closed)
         db.flush_windows(self.conn, self.run_id, self.endpoint, closed, cursor)
+        if self.social_sink is not None:
+            try:
+                self.social_sink.maybe_flush(timeutil.now_us())
+            except Exception:
+                LOG.exception("social sink flush raised; weather lane continues")
         for w in closed:
             self._log_stats(w, snap)
         if self.checkpoint_path:
@@ -227,6 +238,18 @@ class Collector:
         except (json.JSONDecodeError, ValueError):
             self.acc.note_parse_error()
             return
+
+        # The fork. Both lanes read the same parsed message and nothing else:
+        # one keeps counts, the other keeps edges. The sink is isolated -- it
+        # cannot raise into this path and cannot touch the weather database.
+        if self.social_sink is not None:
+            try:
+                self.social_sink.observe(msg)
+            except Exception:
+                # Stream time is the one thing this estate cannot re-derive,
+                # so a sensor bug must never cost an observation. Counted by
+                # the sink's own health row, not swallowed silently.
+                LOG.exception("social sink raised; weather lane continues")
 
         c = classify(msg)
         if c is None:
@@ -341,6 +364,11 @@ class Collector:
             self._end_run()
             if self.checkpoint_path:
                 self.health.write_checkpoint(self.checkpoint_path)
+            if self.social_sink is not None:
+                try:
+                    self.social_sink.close(timeutil.now_us())
+                except Exception:
+                    LOG.exception("social sink close failed")
 
     def _duration_elapsed(self) -> bool:
         if not self.duration_s:
