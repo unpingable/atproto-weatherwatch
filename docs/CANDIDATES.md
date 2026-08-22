@@ -196,3 +196,37 @@ window or keeps carrying everything.
 **Do not let the 200,000 sit here silently.** It is a ceiling with a date on
 it: at 60 s windows it is reached around **2027-01**, and the failure mode is
 the publish timer going red again.
+
+---
+
+## C5 — Give weatherwatch its own FQDN
+
+**Status:** candidate, raised 2026-08-22. Not scoped, not scheduled.
+
+Weatherwatch is served as *paths* inside Labelwatch's Caddy site block —
+`/weatherwatch` plus the `/beef` alias — rather than from a host of its own.
+It has since grown a second published artifact (`social.json`) and a section
+that makes its own claims, so borrowing another instrument's origin is
+starting to misrepresent what it is.
+
+Target shape: `weatherwatch.neutral.zone`, the way `labelwatch.neutral.zone`
+works.
+
+What it touches, none of it decided:
+
+* DNS, plus a certificate — Caddy will want to solve ACME for the new name.
+* The Caddyfile: one 86-line file, **seven site blocks, not under version
+  control**, host convention is timestamped `Caddyfile.bak` copies. The
+  residual risk named in `deploy/README.md` applies unchanged — a malformed
+  config takes all seven sites down, so validate before reload.
+* `WW_PUBLIC_URL`, and the share card's absolute image URL with it.
+* The `X-Robots-Tag: noindex, nofollow, noarchive` posture. A siloed path that
+  nothing links to and a bare hostname are different exposure decisions, and
+  moving is the moment to make that one deliberately rather than by
+  inheritance.
+* Whether `/weatherwatch` and `/beef` keep answering — redirect, dual-serve,
+  or retire. `/beef` is a published joke alias with its own 301; someone has
+  it bookmarked.
+
+Cheap to do, and worth doing before anything else starts linking to the path
+form. Not a prerequisite for anything currently shipped.
