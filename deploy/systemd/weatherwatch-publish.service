@@ -26,7 +26,7 @@ Environment=WW_CLI=/opt/weatherwatch/.venv/bin/weatherwatch
 Environment=WW_DB=/var/lib/weatherwatch/weatherwatch.sqlite
 Environment=WW_BUILD=/var/lib/weatherwatch/build/report
 Environment=WW_TARGET=/var/www/weatherwatch
-Environment=WW_PUBLIC_URL=https://labelwatch.neutral.zone/weatherwatch
+Environment=WW_PUBLIC_URL=https://weatherwatch.neutral.zone/
 # The canonical, tested publication path: render -> privacy gate -> atomic
 # swap. Not reimplemented here.
 ExecStart=/opt/weatherwatch/deploy/publish.sh

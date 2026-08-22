@@ -259,9 +259,31 @@ replacing the `@weatherwatch handle` block with a
 `redir @weatherwatch https://weatherwatch.neutral.zone{re...} 301` and leaving
 `@beef_legacy` pointing at the new host.
 
-Remaining after the flip: decide the robots posture, and decide whether
-`summary.json` / `social.json` consumers need the old path kept alive
-indefinitely or on a sunset.
+### Done, 2026-08-22
+
+DNS propagated, ZeroSSL certificate obtained, and the redirects applied after
+the new host verified 200 on its own certificate — not before, because a 301
+to a name that does not resolve takes the report offline.
+
+* `https://weatherwatch.neutral.zone/` serves the report, `summary.json` and
+  `social.json`.
+* `/weatherwatch`, `/weatherwatch/*` and `/beef*` under `labelwatch.neutral.zone`
+  301 to it, deep paths included
+  (`/weatherwatch/summary.json` → `/summary.json`).
+* `WW_PUBLIC_URL` moved with it; the share card carries an absolute URL and
+  would otherwise have pointed at a redirect.
+* Two timestamped Caddyfile backups taken, `caddy validate` run before each
+  reload, and all eight hosts re-checked after each.
+
+Both redirects use `path_regexp` with a captured tail rather than
+`strip_prefix`, per the warning already in that file: Caddy orders `redir`
+before `uri`, so the `strip_prefix` shape silently self-redirects.
+
+**Still open:** the robots posture. The new host inherited
+`noindex, nofollow, noarchive` from the siloed path. Carrying the conservative
+setting forward is not the same as choosing it, and a bare hostname is a
+different exposure decision from a path nothing links to. Also undecided:
+whether the old path is kept alive indefinitely or put on a sunset.
 
 ---
 

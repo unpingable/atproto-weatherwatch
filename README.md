@@ -8,8 +8,12 @@ a disposable handle; it is now load-bearing — deployed path, published URL,
 Design candidate: `../CANDIDATE-AGGREGATE-WEATHER-TELEMETRY.md`.
 Measured protocol behaviour: [`M0-VERIFICATION-RESULTS.md`](M0-VERIFICATION-RESULTS.md).
 
+**Published at <https://weatherwatch.neutral.zone/>** since 2026-08-22; the
+former `labelwatch.neutral.zone/weatherwatch` path and the `/beef` alias both
+301 there, so existing references keep working.
+
 **Status: M0–M7 implemented; collector supervised under systemd; static report
-published at <https://labelwatch.neutral.zone/weatherwatch> (`/beef` 301s to
+published at <https://weatherwatch.neutral.zone/> (`/beef` 301s to
 it).** There is still no HTTP server, no API, and no read endpoint in this
 codebase — the collector writes a local SQLite file and the report is static
 HTML generated into a directory, which is then published. Run it from a

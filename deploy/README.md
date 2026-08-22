@@ -7,7 +7,7 @@ Status as of 2026-08-09:
 | `/var/www/weatherwatch` on the web host | created, populated |
 | `deploy/publish.sh` (render → privacy gate → atomic swap) | working, verified under load |
 | Caddy route for `/weatherwatch` | **applied**, scoped to `/weatherwatch` and `/beef/*` only |
-| `https://labelwatch.neutral.zone/weatherwatch` | **200** |
+| `https://weatherwatch.neutral.zone/` | **200** |
 | Existing Labelwatch behaviour | unchanged (verified byte-identical against the pre-deployment baseline) |
 
 Backups taken, in order: `Caddyfile.bak.20260808-195841` (route added),
@@ -86,7 +86,7 @@ $SSH 'docker exec caddy caddy validate --config /etc/caddy/Caddyfile --adapter c
 $SSH 'docker exec caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile'
 
 # 5. Verify
-curl -sS -o /dev/null -w '%{http_code}\n' https://labelwatch.neutral.zone/weatherwatch/
+curl -sS -o /dev/null -w '%{http_code}\n' https://weatherwatch.neutral.zone/
 curl -sS -o /dev/null -w '%{http_code}\n' https://labelwatch.neutral.zone/        # must stay 200
 curl -sS -o /dev/null -w '%{http_code}\n' https://stechometer.neutral.zone/       # must stay 200
 ```

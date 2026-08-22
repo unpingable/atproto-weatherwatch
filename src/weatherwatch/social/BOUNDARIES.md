@@ -143,7 +143,7 @@ Removing the drop-in and restarting returns the collector to counters-only.
 The receipt is written either way.
 
 **2. Episodes are published — the aggregate tier only.**
-`https://labelwatch.neutral.zone/weatherwatch` grew section E, and
+`https://weatherwatch.neutral.zone/` grew section E, and
 `social.json` sits beside `summary.json` as its read side.
 
 What that does *not* authorise, and what is still true:

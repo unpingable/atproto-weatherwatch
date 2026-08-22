@@ -70,7 +70,7 @@ fi
 if [ "$MODE" = "local" ]; then
   URL="${WW_URL:-}"
 else
-  URL="${WW_URL:-https://labelwatch.neutral.zone/weatherwatch}"
+  URL="${WW_URL:-https://weatherwatch.neutral.zone/}"
 fi
 SSH=(ssh -i "$SSH_KEY" -o BatchMode=yes -o ConnectTimeout=10 "$SSH_HOST")
 
