@@ -226,32 +226,54 @@ def cmd_field(args) -> int:
         "support": {k: v.support for k, v in sorted(clim.quantities.items())},
     }
     from .field.climatology import candidate_summary
-    out["candidates"] = candidate_summary(points, clim, cands)
-    if args.output:
+    cands_summary = candidate_summary(points, clim, cands)
+    out["candidates"] = cands_summary
+    if args.output or args.station_output:
         # Scoped to this run's climatology: an observation is only meaningful
         # against the baseline it was scored with.
         docs, total_obs = fobs.load_observations(
             econn, climatology_id=clim.climatology_id)
         cdoc = fobs.load_climatology(econn, clim.climatology_id)
-        path = Path(args.output)
-        path.mkdir(parents=True, exist_ok=True)
         from .field.conditions import CRITERIA, STATE_LABEL, assess
         cond = assess(docs, cdoc).as_dict()
         cond["criteria_table"] = [
             (STATE_LABEL[s2], text) for s2, text in CRITERIA]
-        page = fviz.render_page(
-            docs, cdoc,
-            {"generated_at": now, "observations_in_store": total_obs},
-            cond)
+        meta = {"generated_at": now, "observations_in_store": total_obs}
         out["conditions"] = {k: cond[k] for k in
                              ("state", "headline", "confidence",
-                              "persistence_windows")}
-        (path / "index.html").write_text(page, encoding="utf-8")
-        out["page"] = str(path / "index.html")
+                              "persistence_windows", "as_of")}
         out["rendered_from_storage"] = len(docs)
         out["observations_in_store"] = total_obs
         if total_obs > len(docs):
             out["truncated_oldest"] = total_obs - len(docs)
+
+    if args.output:
+        path = Path(args.output)
+        path.mkdir(parents=True, exist_ok=True)
+        (path / "index.html").write_text(
+            fviz.render_public(docs, cdoc, meta, cond), encoding="utf-8")
+        out["page"] = str(path / "index.html")
+
+    if args.station_output:
+        # A SEPARATE artifact, never written into the public directory.
+        # Merging an operator instrument into the visitor experience is what
+        # this split exists to prevent, so it takes its own flag and path.
+        from .field import baseline as fbase
+        spath = Path(args.station_output)
+        if args.output and spath.resolve() == Path(args.output).resolve():
+            print("refusing to write the calibration surface into the public "
+                  "output directory; give --station-output its own path",
+                  file=sys.stderr)
+            econn.close()
+            return 2
+        spath.mkdir(parents=True, exist_ok=True)
+        (spath / "index.html").write_text(
+            fviz.render_station(docs, cdoc, meta, cond), encoding="utf-8")
+        (spath / "climatology.md").write_text(
+            fbase.report(cdoc, docs, cands_summary, meta), encoding="utf-8")
+        out["station_page"] = str(spath / "index.html")
+        out["baseline_report"] = str(spath / "climatology.md")
+
     econn.close()
     print(json.dumps(out, indent=2))
     return 0
@@ -340,6 +362,11 @@ def register(sub, default_social_db) -> None:
     f.add_argument("--until", default=None)
     f.add_argument("--last", default=None, help="e.g. 7d")
     f.add_argument("--output", default=None,
-                   help="render the station page into this directory, from "
-                        "STORED observations rather than from memory")
+                   help="render the PUBLIC weather page into this directory, "
+                        "from STORED observations rather than from memory")
+    f.add_argument("--station-output", default=None,
+                   help="render the calibration surface and the climatology "
+                        "baseline report into this directory. Separate from "
+                        "--output on purpose: operator instrumentation, not "
+                        "published.")
     f.set_defaults(fn=cmd_field)

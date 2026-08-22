@@ -92,11 +92,23 @@ def lag1_autocorrelation(xs: list) -> float | None:
 
 
 def effective_n(n: int, r: float | None) -> float | None:
-    """AR(1) effective sample size. Clamped at 1: n_eff below one is nonsense."""
+    """AR(1) effective sample size, clamped to [1, n].
+
+    Both bounds are real. Below one is nonsense. *Above n* is also nonsense,
+    and the formula produces it whenever the series is negatively
+    autocorrelated: `(1-r)/(1+r)` exceeds 1 for r < 0, so an alternating
+    series reports more independent samples than it has observations.
+
+    Observed on the live estate: `acceleration` (lag-1 r = -0.37, n = 17,273)
+    reported n_eff = 37,576. Anti-correlation genuinely does carry more
+    information per observation than independence does, but not more
+    information than there are observations, and a baseline report claiming
+    otherwise undermines the one number it exists to be honest about.
+    """
     if r is None or n <= 0:
         return None
     r = max(min(r, 0.999), -0.999)
-    return max(1.0, n * (1.0 - r) / (1.0 + r))
+    return max(1.0, min(float(n), n * (1.0 - r) / (1.0 + r)))
 
 
 @dataclass(frozen=True)

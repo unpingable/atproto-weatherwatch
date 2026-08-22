@@ -95,6 +95,59 @@ CANNOT_SEE = (
 )
 
 
+#: For each measurable property: what was observed, and the inference a reader
+#: is most likely to make from it that the measurement does not license.
+#:
+#: Pairing them is the point. "Interaction velocity elevated" on its own
+#: invites "people are angry", and a reader supplies that themselves unless
+#: the instrument says otherwise in the same breath. The right-hand column is
+#: not a disclaimer; it is the other half of the reading.
+NOT_OBSERVED = {
+    "interaction_velocity":
+        "That anyone is upset, or that the activity is hostile. A like and a "
+        "furious quote-post are one event each here.",
+    "emission_velocity":
+        "That more people are present. One repo may emit many records and the "
+        "counters cannot tell them apart.",
+    "interaction_pressure":
+        "That the content is controversial. Reactions per post rises for a "
+        "popular post and for a quiet emission rate alike.",
+    "reply_share":
+        "That an argument is happening. Replies include agreement, jokes, and "
+        "threads an author writes to themselves.",
+    "persistence":
+        "That this was coordinated, planned or organised. Duration is "
+        "duration.",
+    "turbulence":
+        "That a community is unstable. This is a property of an observed rate "
+        "series at one endpoint.",
+    "boundary_share":
+        "That conflict increased. Blocks are also routine hygiene, "
+        "list-driven, and frequently unrelated to any dispute.",
+    "withdrawal_share":
+        "That anyone regretted or retracted anything. Deletion is also "
+        "editing, cleanup, migration and automation.",
+    "graph_velocity":
+        "That the social graph changed shape. These are graph *events*; no "
+        "edge is retained and no endpoint is known.",
+}
+
+
+#: Used when a quantity has no specific entry above. Never omit the column.
+GENERIC_NOT_OBSERVED = (
+    "Anything about the people involved. This is a count of events, and the "
+    "counters never held an account.")
+
+
+@dataclass(frozen=True)
+class Pairing:
+    """One measured property beside the inference it does not license."""
+
+    quantity: str
+    observed: str
+    not_observed: str
+
+
 @dataclass(frozen=True)
 class Reason:
     """One plain-language sentence, with the number behind it."""
@@ -117,6 +170,8 @@ class Conditions:
     confidence: str
     confidence_plain: str
     persistence_windows: int
+    #: Measured properties beside the inferences they do not license.
+    pairings: tuple = ()
     #: End of the most recent COMPLETE window these conditions describe.
     as_of: str = ""
     cannot_see: tuple = CANNOT_SEE
@@ -136,6 +191,11 @@ class Conditions:
             "confidence": self.confidence,
             "confidence_plain": self.confidence_plain,
             "persistence_windows": self.persistence_windows,
+            "pairings": [
+                {"quantity": p.quantity, "observed": p.observed,
+                 "not_observed": p.not_observed}
+                for p in self.pairings
+            ],
             "as_of": self.as_of,
             "cannot_see": list(self.cannot_see),
         }
@@ -250,6 +310,7 @@ def assess(observations: list, clim: dict) -> Conditions:
     criteria = next(c for s, c in CRITERIA if s == state)
     reasons = _reasons(latest, clim, hour, iv, p50, p75, p95, ratio, runs,
                        turb, turb_p95, turb_high)
+    pairings = _pairings(reasons)
     return Conditions(
         state=state,
         label=STATE_LABEL[state],
@@ -260,6 +321,7 @@ def assess(observations: list, clim: dict) -> Conditions:
         confidence=support,
         confidence_plain=_confidence_plain(support, conf, stale_windows),
         persistence_windows=runs,
+        pairings=pairings,
         as_of=latest.get("ts_end", ""),
     )
 
@@ -374,3 +436,25 @@ def _reasons(latest, clim, hour, iv, p50, p75, p95, ratio, runs,
                     quantity=name, value=round(v, 4),
                     reference=round(med, 4), ratio=round(rr, 3)))
     return out
+
+
+def _pairings(reasons: list) -> tuple:
+    """Pair every reason shown with the inference it does not license.
+
+    Driven off the reasons actually rendered, so the two columns always have
+    the same number of rows and a reader cannot be given a measurement whose
+    limit went unstated.
+    """
+    out = []
+    seen = set()
+    for r in reasons:
+        if r.quantity in seen:
+            continue
+        # Fall back rather than drop: a measurement shown without its limit
+        # is the failure this pairing exists to prevent, so an unmapped
+        # quantity gets the generic refusal instead of vanishing.
+        limit = NOT_OBSERVED.get(r.quantity, GENERIC_NOT_OBSERVED)
+        seen.add(r.quantity)
+        out.append(Pairing(quantity=r.quantity, observed=r.plain,
+                           not_observed=limit))
+    return tuple(out)

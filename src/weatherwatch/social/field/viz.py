@@ -89,6 +89,15 @@ padding:6px 0;list-style:revert}
 .cant{padding-left:18px;margin:6px 0;font-size:12px}
 .crit td{font-size:12px}
 .conf{font-size:12px;color:var(--muted);margin-top:8px}
+.obs{display:grid;grid-template-columns:1fr 1fr;gap:0}
+@media (max-width:720px){.obs{grid-template-columns:1fr}}
+.obs>div{padding:10px 14px;border-top:1px solid var(--rule)}
+.obs .hd{font-size:10.5px;text-transform:uppercase;letter-spacing:.07em;
+color:var(--muted);border-top:0;padding-bottom:4px;font-weight:600}
+.obs .yes{border-left:3px solid var(--q2)}
+.obs .no{border-left:3px solid var(--muted);color:var(--muted)}
+.calib{border-left:3px solid var(--q3);padding:10px 14px;margin:0 0 14px;
+background:var(--panel);font-size:12.5px}
 code{font-size:11.5px;color:var(--muted)}
 footer{margin-top:30px;padding-top:14px;border-top:1px solid var(--rule);
 color:var(--muted);font-size:11.5px}
@@ -513,8 +522,6 @@ def _radar(obs: list, clim: dict, size=360) -> str:
 
 def _panel_hero(cond: dict, obs: list, clim: dict) -> str:
     state = cond.get("state", "unavailable")
-    reasons = "".join(f"<li>{_esc(r['plain'])}</li>"
-                      for r in cond.get("reasons", []))
     cant = "".join(f"<li>{_esc(c)}</li>" for c in cond.get("cannot_see", []))
     crit = "".join(
         f'<tr><td>{_esc(label)}</td><td>{_esc(text)}</td></tr>'
@@ -534,7 +541,7 @@ what that hour usually looks like. Shaded band = usual range.</p></div>
 </div>
 
 <details open><summary>Why these conditions?</summary>
-<ul class="why">{reasons or "<li>No comparison was possible.</li>"}</ul>
+{_pairs_table(cond)}
 <p class="note">Rule applied: {_esc(cond.get("criteria", ""))}</p>
 <p class="note" style="margin-top:10px"><strong>What this instrument cannot
 see</strong>, in case you were about to assume otherwise:</p>
@@ -562,13 +569,73 @@ def _truncation(meta: dict, shown: int) -> str:
             f"{total - shown:,} older not drawn)")
 
 
-def render_page(observations: list, climatology: dict, meta: dict,
-                conditions: dict | None = None) -> str:
-    """Three tiers: what the weather is, why, and the machinery behind it.
+def _pairs_table(cond: dict) -> str:
+    """Two columns: what was measured, and what it does not license.
 
-    A visitor who reads only the first screen should come away with a correct
-    impression. A visitor who wants the numbers can open them. Nobody has to
-    meet a z-score to find out whether the environment is calm.
+    Not a disclaimer block, and not a second panel further down the page. A
+    reader given "interaction activity is 4.6x typical" supplies "people must
+    be angry" themselves unless the instrument says otherwise in the same
+    breath, so the limit sits in the same row as the measurement.
+    """
+    pairs = cond.get("pairings", [])
+    if not pairs:
+        return '<p class="note">No comparison was possible.</p>'
+    rows = ['<div class="hd">Observed</div><div class="hd">Not observed</div>']
+    for p in pairs:
+        rows.append(f'<div class="yes">{_esc(p["observed"])}</div>'
+                    f'<div class="no">{_esc(p["not_observed"])}</div>')
+    return f'<div class="obs">{"".join(rows)}</div>'
+
+
+def render_public(observations: list, climatology: dict, meta: dict,
+                  conditions: dict | None = None) -> str:
+    """The page a visitor meets. Conditions, why, and the limits — no metrics.
+
+    Deliberately carries no n_eff, no percentile tables, no meteogram and no
+    internal vocabulary. Someone walking in off the street should be able to
+    tell whether anything unusual is happening; an expert should be able to
+    tell that nobody is pretending to know why. Neither of those needs a
+    dashboard, and a dashboard would answer a third question nobody asked.
+
+    The calibration surface lives in `render_station` and is not published.
+    """
+    obs = sorted(observations, key=lambda o: o["ts_start"])
+    clim = climatology or {}
+    cond = conditions or {}
+
+    return f"""<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow,noarchive">
+<title>social weather · current conditions</title>
+<style>{STYLE}</style></head><body><div class="wrap">
+<h1>social weather</h1>
+<p class="sub">Conditions in a public interaction field, the way a weather
+service reports conditions in the air. It tells you what the network is
+experiencing. It cannot report who caused it, and that is a property of the
+data rather than a policy on top of it: every figure here comes from aggregate
+counters that never contained an actor, a target, a record body or a
+location.</p>
+
+{_panel_hero(cond, obs, clim)}
+
+<footer>
+{_esc(meta.get("generated_at", ""))} ·
+conditions from {len(obs):,} observed windows ·
+aggregate counters only — no identities, no text, no geography.
+Observation is not causation.
+</footer>
+</div></body></html>"""
+
+
+def render_station(observations: list, climatology: dict, meta: dict,
+                   conditions: dict | None = None) -> str:
+    """The calibration surface. Operator-facing; not published.
+
+    Everything a reader would need to decide whether to believe the public
+    page: the distributions behind each state, how much independent sample
+    they rest on, where observation was thin, and what the instrument cannot
+    measure at all.
     """
     obs = sorted(observations, key=lambda o: o["ts_start"])
     clim = climatology or {}
@@ -594,30 +661,39 @@ def render_page(observations: list, climatology: dict, meta: dict,
             (obs[0]["structural_absences"] if obs else {}).items())
     ) or '<tr><td colspan="2">—</td></tr>'
 
+    unsupported = [n for n, q in sorted(clim.get("quantities", {}).items())
+                   if q.get("support") == "unsupported"]
+    thin = [n for n, q in sorted(clim.get("quantities", {}).items())
+            if q.get("support") == "thin"]
+    calib = ""
+    if unsupported or thin:
+        calib = (
+            f'<div class="calib"><strong>Calibration is incomplete.</strong> '
+            f'{len(unsupported)} quantit{"y" if len(unsupported) == 1 else "ies"} '
+            f'cannot support a comparison at all'
+            + (f' ({_esc(", ".join(unsupported))})' if unsupported else '')
+            + f'; {len(thin)} rest on a thin baseline'
+            + (f' ({_esc(", ".join(thin))})' if thin else '')
+            + '. Quantities marked <em>unsupported</em> are excluded from '
+              'candidates and from the public state entirely.</div>')
+
     return f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="robots" content="noindex,nofollow,noarchive">
-<title>social weather · current conditions</title>
+<title>social weather · calibration</title>
 <style>{STYLE}</style></head><body><div class="wrap">
-<h1>social weather</h1>
-<p class="sub">Conditions in a public interaction field, the way a weather
-service reports conditions in the air. It tells you what the network is
-experiencing. It cannot report who caused it, and that is a property of the
-data rather than a policy on top of it: every figure here comes from aggregate
-counters that never contained an actor, a target, a record body or a
-location.</p>
-
-{_panel_hero(cond, obs, clim)}
-
-<details><summary>Technical detail — measurements, climatology and
-provenance</summary>
-
+<h1>social weather · calibration</h1>
+<p class="sub"><strong>Operator surface, not the public page.</strong> This is
+the instrument's own paperwork: the distributions behind each state, how much
+independent sample they rest on, and what cannot be measured at all. The
+public page is deliberately none of this.</p>
 <p class="sub warn"><strong>This is a climatology, not an alarm system.</strong>
-Nothing below is a detector. Values are placed against the distribution of the
+Nothing here is a detector. Values are placed against the distribution of the
 same measurement in the same hour of day, and where the history is too short
 to support that, the panel says <em>unsupported</em> instead of guessing.
 {_esc(how_note)}</p>
+{calib}
 
 <h2>A · Conditions</h2>
 {_panel_conditions(obs, clim)}
@@ -652,8 +728,6 @@ n_eff — would overstate every baseline here.</p></div>
 <p class="note">These are design properties, not gaps awaiting work. Each is
 absent because measuring it would require retention this instrument
 refuses.</p></div>
-
-</details>
 
 <footer>
 {_esc(meta.get("generated_at", ""))} ·

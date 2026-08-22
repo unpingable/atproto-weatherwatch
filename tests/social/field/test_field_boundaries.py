@@ -43,7 +43,7 @@ def built(field_conn):
 def page(built):
     points, clim, obs, cands = built
     docs = [o.as_dict() for o in obs]
-    return viz.render_page(docs, clim.as_dict(), {"generated_at": "t"})
+    return viz.render_public(docs, clim.as_dict(), {"generated_at": "t"})
 
 
 @pytest.fixture()
@@ -157,12 +157,18 @@ def test_observations_carry_assembled_non_claims(built):
         assert any(nc.startswith(f"{name}:") for nc in o.non_claims)
 
 
-def test_page_states_the_non_causal_posture(page_text):
+def test_page_states_the_non_causal_posture(page_text, built):
     assert "observation is not causation" in page_text
     assert "cannot report who caused it" in page_text
-    assert "climatology, not an alarm system" in page_text
     for bad in CAUSAL:
         assert bad not in page_text, f"page says {bad!r}"
+
+    # "not an alarm system" is a statement about the machinery, so it moved to
+    # the calibration surface along with the machinery.
+    _, clim, obs, _ = built
+    station = viz.render_station([o.as_dict() for o in obs], clim.as_dict(),
+                                 {"generated_at": "t"})
+    assert "climatology, not an alarm system" in station.lower()
 
 
 def test_candidates_are_typed_as_candidates_not_findings(built):
@@ -222,8 +228,8 @@ def test_page_renders_identically_from_storage_twice(built, tmp_path):
     obs_mod.save_observations(conn, obs, "t")
     cdoc = obs_mod.load_climatology(conn)
     meta = {"generated_at": "fixed"}
-    a = viz.render_page(obs_mod.load_observations(conn)[0], cdoc, meta)
-    b = viz.render_page(obs_mod.load_observations(conn)[0], cdoc, meta)
+    a = viz.render_public(obs_mod.load_observations(conn)[0], cdoc, meta)
+    b = viz.render_public(obs_mod.load_observations(conn)[0], cdoc, meta)
     assert a == b
     conn.close()
 
@@ -291,12 +297,14 @@ def test_loader_returns_the_newest_observations_not_the_oldest(built, tmp_path):
     conn.close()
 
 
-def test_page_discloses_when_the_archive_is_larger_than_the_page(built):
+def test_station_discloses_when_the_archive_is_larger_than_the_page(built):
+    """The archive view lives on the calibration surface; the public page
+    reports current conditions and shows no archive to truncate."""
     _, clim, obs, _ = built
     docs = [o.as_dict() for o in obs][:50]
-    html = viz.render_page(docs, clim.as_dict(),
-                           {"generated_at": "t",
-                            "observations_in_store": 20000})
+    html = viz.render_station(docs, clim.as_dict(),
+                              {"generated_at": "t",
+                               "observations_in_store": 20000})
     assert "most recent of 20,000 in the archive" in html
     assert "older not drawn" in html
 

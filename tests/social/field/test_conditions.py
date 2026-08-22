@@ -140,35 +140,57 @@ def test_conditions_dict_has_no_actor_shaped_field(field_conn):
 # --- the rendered public tier ----------------------------------------------
 
 @pytest.fixture()
+def storm_parts(field_conn):
+    c, docs, clim = _assess(field_conn, days=30)
+    cond = c.as_dict()
+    cond["criteria_table"] = [
+        (cond_mod.STATE_LABEL[s], t) for s, t in cond_mod.CRITERIA]
+    return docs, clim, cond
+
+
+@pytest.fixture()
 def page(field_conn):
     c, docs, clim = _assess(field_conn, days=30)
     cond = c.as_dict()
     cond["criteria_table"] = [
         (cond_mod.STATE_LABEL[s], t) for s, t in cond_mod.CRITERIA]
-    return viz.render_page(docs, clim, {"generated_at": "t"}, cond), c
+    return viz.render_public(docs, clim, {"generated_at": "t"}, cond), c
 
 
-def test_first_screen_states_conditions_before_any_machinery(page):
+def test_first_screen_states_conditions_before_anything_else(page):
+    """The state is the first thing on the page, not a summary above a table."""
     html, c = page
     where_state = html.index(c.headline)
-    where_tech = html.index("Technical detail")
-    assert where_state < where_tech, "the state must come first"
-    assert where_state < html.index("n_eff")
+    assert where_state < html.index("Why these conditions?")
+    assert where_state < len(html) // 2
 
 
-def test_technical_detail_is_behind_disclosure(page):
-    html, _ = page
-    assert "<details><summary>Technical detail" in html
+def test_technical_detail_is_a_separate_page_not_a_disclosure(storm_parts):
+    """It used to be a <details> on the same page. Objective 5 of the campaign
+    is that the calibration surface stays separate, so it is now its own
+    artifact and the public page carries none of it.
+
+    Both renders come from ONE fixture: requesting `page` as well would write
+    the same run id into the shared connection twice.
+    """
+    docs, clim, cond = storm_parts
+    html = viz.render_public(docs, clim, {"generated_at": "t"}, cond)
     assert "<details open><summary>Why these conditions?" in html
+    assert "Technical detail" not in html
+    station = viz.render_station(docs, clim, {"generated_at": "t"}, cond)
+    assert "operator surface, not the public page" in station.lower()
+    for marker in ("Meteogram", "n_eff", "Field portrait"):
+        assert marker in station and marker not in html
 
 
-def test_public_tier_carries_no_jargon(page):
-    """Everything before the technical disclosure must be readable cold."""
+def test_public_page_carries_no_jargon(page):
+    """The whole public page must be readable cold -- there is no longer a
+    technical half to exclude from the check."""
     html, _ = page
-    public = html[:html.index("Technical detail")].lower()
-    for jargon in ("z-score", "mad", "n_eff", "autocorrel", "herfindahl",
-                   "percentile of", "coefficient of variation", "ar(1)"):
-        assert jargon not in public, f"public tier says {jargon!r}"
+    low = html.lower()
+    for jargon in ("z-score", "n_eff", "autocorrel", "herfindahl",
+                   "coefficient of variation", "ar(1)", "deseasonalis"):
+        assert jargon not in low, f"public page says {jargon!r}"
 
 
 def test_criteria_table_is_rendered_for_checking(page):
@@ -180,9 +202,11 @@ def test_criteria_table_is_rendered_for_checking(page):
 
 def test_page_shows_what_it_cannot_see_next_to_the_state(page):
     html, _ = page
-    public = html[:html.index("Technical detail")]
-    assert "cannot" in public.lower()
-    assert "how many people are involved" in public.lower()
+    low = html.lower()
+    assert "cannot" in low
+    assert "how many people are involved" in low
+    # and beside each measurement, not only in a list at the bottom
+    assert "not observed" in low
 
 
 def test_radar_axes_are_hour_and_ratio_not_space(page):

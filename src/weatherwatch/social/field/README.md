@@ -118,6 +118,26 @@ hour-of-day cell. Two guards keep that from becoming a finding:
   and without a spread guard every window with float jitter reads as unusual —
   observed on a fixture as 192 of 192 windows flagged.
 
+## Two surfaces, never merged
+
+| | public | calibration |
+|---|---|---|
+| function | `viz.render_public` | `viz.render_station` |
+| flag | `--output` | `--station-output` |
+| size | ~11 KB | ~320 KB |
+| carries | state, why, limits, radar | meteogram, intensity map, field portrait, climatology, provenance |
+| published | yes (when deployed) | **no** — operator only |
+
+The CLI refuses to write the calibration surface into the public directory.
+The disposition and the trigger for revisiting it are recorded in
+[`DECISIONS.md`](DECISIONS.md) §5.
+
+`--station-output` also writes **`climatology.md`** — the baseline report,
+generated from the climatology rather than composed by hand, answering *what
+does normal look like?* with the observation window, both sample-size
+estimates, seasonality handling, the conclusions the baseline cannot support,
+and the permanent blind spots.
+
 ## The public layer
 
 A visitor should be able to answer *is this environment calm, active,
@@ -127,11 +147,19 @@ Three tiers, progressive disclosure, no JavaScript:
 1. **The state.** A headline, one plain sentence, and a radar. *"Severe
    interaction storm — interaction activity is running about 4.6× its usual
    level for this hour and has stayed there for 5 windows."*
-2. **Why.** Plain-language reasons, each with the number behind it, plus the
-   rule that was applied — and, deliberately beside them, **what the
-   instrument cannot see**.
-3. **Technical detail**, behind a disclosure: measurements, climatology,
-   provenance, n_eff, the lot.
+2. **Why**, as two columns: every measurement shown beside the inference it
+   does **not** license.
+
+   | Observed | Not observed |
+   |---|---|
+   | Interaction activity is 4.6× its typical level for this hour. | That anyone is upset, or that the activity is hostile. |
+   | Conditions have stayed elevated for 5 consecutive windows. | That this was coordinated, planned or organised. |
+
+   The pairing is driven off the reasons actually rendered, so the columns
+   always have the same number of rows and no measurement can reach a reader
+   without its limit. An unmapped quantity gets a generic refusal rather than
+   being dropped.
+3. **The rule that was applied**, and what the instrument cannot see at all.
 
 States are `Calm`, `Active`, `Turbulent`, `Storm`, `Severe storm`, and
 `Conditions unavailable`.

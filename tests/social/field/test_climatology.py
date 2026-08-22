@@ -36,6 +36,24 @@ def test_effective_n_shrinks_with_autocorrelation():
     assert clim_mod.effective_n(10, 0.999) >= 1.0, "never below one"
 
 
+def test_effective_n_never_exceeds_the_sample_it_came_from():
+    """(1-r)/(1+r) exceeds 1 for negative r, so an alternating series claims
+    more independent samples than observations. Seen live: acceleration at
+    r=-0.37, n=17,273 reported n_eff 37,576."""
+    assert clim_mod.effective_n(1000, -0.37) == 1000
+    assert clim_mod.effective_n(1000, -0.9) == 1000
+    assert clim_mod.effective_n(17_273, -0.37) <= 17_273
+
+
+def test_a_negatively_correlated_quantity_reports_n_eff_at_most_n(field_conn):
+    _, clim, _, _ = _build(field_conn, days=30)
+    for name, q in clim.quantities.items():
+        d = q.overall
+        for label, val in (("raw", d.n_eff), ("residual", d.n_eff_residual)):
+            if val is not None:
+                assert val <= d.n + 1e-6, f"{name} {label} n_eff {val} > n {d.n}"
+
+
 def test_autocorrelation_of_a_trend_is_high():
     r = clim_mod.lag1_autocorrelation([float(i) for i in range(50)])
     assert r is not None and r > 0.9
