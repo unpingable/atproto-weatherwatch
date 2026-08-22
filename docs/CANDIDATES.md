@@ -230,3 +230,73 @@ What it touches, none of it decided:
 
 Cheap to do, and worth doing before anything else starts linking to the path
 form. Not a prerequisite for anything currently shipped.
+
+---
+
+## C6 — Conversational storm detection, and the map that has no substrate
+
+**Status:** candidate, raised 2026-08-22. Nothing built, nothing authorised.
+
+The idea: extend episode detection from *event-rate* departures to
+*conversation* dynamics — reply bursts, quote cascades, participants arriving
+and leaving, interaction loops, persistence — and give it a map-like surface.
+
+The framing is right, and it is the reason to take it seriously: **weather does
+not accuse.** A storm warning says rotation was observed; it does not say the
+cloud meant it. That is the same posture section E already holds, and it is
+the posture that keeps this from becoming a witch-finder with a nicer palette.
+
+### What is genuinely close
+
+Reply and quote edges are observable and were verified live (see
+`../M0-ADVERSARIAL-DISCOURSE-GRAMMAR.md` §5): `.reply.parent` / `.reply.root`,
+and quotes via **two** distinct record paths — `.embed.record.uri` and
+`.embed.record.record.uri`, 147 vs 16 on the probe post, so querying one
+undercounts. From those, these are episode-shaped and need no new authority
+model:
+
+* conversation velocity — replies/min, participants/min
+* loopiness — repeat interaction between the same participants, reply depth,
+  cycles in the interaction graph
+* persistence — does it cool, or keep branching
+* participant novelty — share of participants not seen in the prior window.
+  Admissible as an **episode-level aggregate**; the same number computed per
+  account is a dossier row.
+
+### What is not close, and should not be assumed
+
+**1. There is no geography in ATProto.** A globe has no substrate. Nothing in
+the protocol carries location, so a hotspot map is one of: fabricated
+coordinates (inventing data, which this estate has never done), or PDS-host IP
+geolocation — which is *infrastructure* location, not people, and is a new
+identity-adjacent join of exactly the kind `nebgraph/ETHICS.md` is about. A
+map is still possible, but it has to be honestly **not Earth**: graph layout,
+or an abstract pressure field that never implies a place. Do not ship a globe
+that implies people are somewhere.
+
+**2. Topic drift and receipt density need text.** Weatherwatch cannot retain
+it: `classify()` discards it structurally, the edge store has no column for
+it, and a canary test enforces both. That is the *opposite* retention posture,
+and the argument in `M0-ADVERSARIAL-DISCOURSE-GRAMMAR.md` §6 — separate repo,
+copy the parsing, import nothing — applies unchanged.
+
+**3. Volume.** Reply/quote edges mean retaining post edges: ~39/s posts and
+~17.6/s replies as observed, against the ~5/s the sink retains today. That is
+a retention decision before it is a detector decision.
+
+### Naming, decided in advance
+
+Banned from any surface, for the same reason the current type strings avoid
+mechanisms: *toxicity map*, *bad actor hotspots*, *harassment clusters*,
+*controversy detector*. If this is built, extend
+`test_no_type_string_names_a_mechanism` to cover the new vocabulary before
+writing the detector, not after.
+
+Admissible: interaction density, conversational turbulence, structure-observed,
+unusual graph behaviour. Meteorologist, not judge.
+
+### Gate
+
+Needs a forcing case and acceptance criteria like everything else here. The
+honest first increment is not a detector — it is measuring the **base rate**
+of reply/quote bursts, so "storm" has a denominator before it has a name.
