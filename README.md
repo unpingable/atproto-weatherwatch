@@ -1,5 +1,7 @@
 # weatherwatch
 
+[![CI](https://github.com/unpingable/atproto-weatherwatch/actions/workflows/ci.yml/badge.svg)](https://github.com/unpingable/atproto-weatherwatch/actions/workflows/ci.yml)
+
 An aggregate ATProto/Bluesky event weather instrument: it counts network-level
 activity rates from a Jetstream source and keeps no people. (The name began as
 a disposable handle; it is now load-bearing — deployed path, published URL,
