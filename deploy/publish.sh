@@ -23,8 +23,8 @@
 #   WW_DB        SQLite path              (default data/weatherwatch.sqlite)
 #   WW_BUILD     render dir               (default build/report)
 #   WW_TARGET    live directory (local)   (default /var/www/weatherwatch)
-#   WW_SSH_HOST  target (remote)          (default root@labelwatch.neutral.zone)
-#   WW_SSH_KEY   identity (remote)        (default ~/.ssh/linode)
+#   WW_SSH_HOST  target (remote; required, no repository default)
+#   WW_SSH_KEY   identity file (remote; required, no repository default)
 #   WW_REMOTE    live directory (remote)  (default /var/www/weatherwatch)
 #   WW_URL       verification URL         (empty in local mode = skip HTTP check)
 #   WW_PY        python for rendering     (default python3)
@@ -36,16 +36,14 @@ set -euo pipefail
 
 MODE="${WW_MODE:-remote}"
 DB="${WW_DB:-data/weatherwatch.sqlite}"
-# Episode store for the report's social section. Aggregate-tier episodes only
-# reach the page; they are derived from the identity-free minute counters and
-# carry no actor or target. Unset means the section renders as "no episode
-# store configured" rather than disappearing -- absence of a section would be
-# indistinguishable from absence of episodes.
+# Episode store for the report's social section. Public rows pass the
+# cardinality and coarsening policy in social/projection.py; exact edge data
+# stays local. Unset renders the section as unavailable rather than calm.
 SOCIAL_DB="${WW_SOCIAL_DB:-}"
 BUILD="${WW_BUILD:-build/report}"
 TARGET="${WW_TARGET:-/var/www/weatherwatch}"
-SSH_HOST="${WW_SSH_HOST:-root@labelwatch.neutral.zone}"
-SSH_KEY="${WW_SSH_KEY:-$HOME/.ssh/linode}"
+SSH_HOST="${WW_SSH_HOST:-}"
+SSH_KEY="${WW_SSH_KEY:-}"
 REMOTE="${WW_REMOTE:-/var/www/weatherwatch}"
 PY="${WW_PY:-python3}"
 CLI="${WW_CLI:-}"
@@ -72,7 +70,16 @@ if [ "$MODE" = "local" ]; then
 else
   URL="${WW_URL:-https://weatherwatch.neutral.zone/}"
 fi
-SSH=(ssh -i "$SSH_KEY" -o BatchMode=yes -o ConnectTimeout=10 "$SSH_HOST")
+SSH=()
+if [ "$MODE" = "remote" ]; then
+  [ -n "$SSH_HOST" ] || {
+    echo "!! WW_SSH_HOST is required in remote mode" >&2; exit 1;
+  }
+  [ -n "$SSH_KEY" ] || {
+    echo "!! WW_SSH_KEY is required in remote mode" >&2; exit 1;
+  }
+  SSH=(ssh -i "$SSH_KEY" -o BatchMode=yes -o ConnectTimeout=10 "$SSH_HOST")
+fi
 
 if [ "${1:-}" != "--skip-generate" ]; then
   echo "==> Rendering from $DB"

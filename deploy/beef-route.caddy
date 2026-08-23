@@ -1,14 +1,8 @@
-    # Weatherwatch aggregate report (siloed; nothing links here, noindex).
-    # Static only: separate root, separate publish path, no service.
-    #
-    # Two exact path patterns, not a prefix glob. `handle_path /beef*` also
-    # matched /beefsteak and /beefy.html, pulling unrelated paths into this
-    # namespace. handle_path accepts only one matcher, so: named matcher +
-    # explicit strip, which also keeps bare /beef at 200 rather than 301.
-    @beef path /beef /beef/*
-    handle @beef {
-        root * /srv/www/weatherwatch-beef
-        header X-Robots-Tag "noindex, nofollow, noarchive"
-        uri strip_prefix /beef
-        file_server
-    }
+    # Illustrative legacy redirects inside the former host's site block.
+    # This is not the live shared-proxy configuration. Exact regex boundaries
+    # keep /beefsteak and /weatherwatcher outside these namespaces.
+    @weatherwatch_legacy path_regexp weatherwatch_legacy ^/weatherwatch(?:/(.*))?$
+    redir @weatherwatch_legacy https://weatherwatch.neutral.zone/{re.weatherwatch_legacy.1} 301
+
+    @beef_legacy path_regexp beef_legacy ^/beef(?:/(.*))?$
+    redir @beef_legacy https://weatherwatch.neutral.zone/{re.beef_legacy.1} 301

@@ -1,8 +1,9 @@
 """weatherwatch — aggregate ATProto event weather telemetry.
 
-Counts network-level activity rates from a Jetstream source and persists only
-aggregate counters plus observation-health metadata. No raw events, no DIDs,
-no handles, no rkeys, no CIDs, no URIs, no user text — ever, anywhere.
+The weather lane counts network-level activity rates from a Jetstream source
+and persists only aggregate counters plus observation-health metadata. Its
+database carries no raw events, DIDs, handles, rkeys, CIDs, URIs, or user text.
+The optional bounded social edge sink is separate and documented explicitly.
 """
 
 COLLECTOR_VERSION = "0.1.0"

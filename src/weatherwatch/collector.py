@@ -98,9 +98,9 @@ class Collector:
         self.bucket_width = bucket_width
         self.checkpoint_path = checkpoint_path
         #: Optional second sink on the parsed-message path (weatherwatch.social).
-        #: None in every default configuration, including the deployed one: the
-        #: weather lane's "keeps no people" guarantee is a property of what runs,
-        #: not only of what is written here. See social/BOUNDARIES.md.
+        #: None in every code default. A deployment may explicitly enable the
+        #: separate bounded-custody lane; doing so never changes the weather
+        #: database or classifier output. See social/BOUNDARIES.md.
         self.social_sink = social_sink
 
         self.run_id = new_run_id()

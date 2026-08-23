@@ -24,7 +24,7 @@ from .projection import (
     assert_identity_free,
 )
 
-SCHEMA = "weatherwatch.social/v1"
+SCHEMA = "weatherwatch.social/v2"
 ARTIFACT_NAME = "social.json"
 
 
@@ -33,10 +33,12 @@ def build(projection: SocialProjection, generated_at: str | None = None) -> dict
         "schema": SCHEMA,
         "generated_at": generated_at or timeutil.now_iso(),
         "disclaimer": (
-            "Observed departures in aggregate event rates, as seen at one "
-            "Jetstream endpoint. Episodes describe intervals, not accounts. "
-            "Magnitude bands are provisional measurements, not conclusions, "
-            "and co-occurrence is not causation."
+            "Disclosure-limited departures in aggregate event rates, as seen "
+            "at one Jetstream endpoint. Public periods passed a provisional "
+            "local actor-support gate and were time-coarsened; this is "
+            "disclosure resistance, not anonymity. Magnitude bands are "
+            "provisional measurements, not conclusions, and co-occurrence "
+            "is not causation."
         ),
         **projection.as_dict(),
     }

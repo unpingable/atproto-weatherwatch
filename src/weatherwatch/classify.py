@@ -100,7 +100,8 @@ def _build_allowed_metrics() -> frozenset[str]:
     # would put third-party lexicon names into the product data. The count is
     # the canary; the breakdown is logged to STATS, never persisted.
     m.add("unclassified.kind")
-    m.add("unclassified.collection")
+    m.add("untracked.collection")
+    m.add("malformed.collection")
     m.add("unclassified.operation")
     m.add("malformed.commit")
     return frozenset(m)
@@ -173,13 +174,13 @@ def _classify_commit(commit: Any) -> list[str]:
     if not isinstance(operation, str) or operation not in OPERATIONS:
         return ["unclassified.operation"]
     if not isinstance(collection, str) or not collection:
-        return ["unclassified.collection"]
+        return ["malformed.collection"]
 
     alias = COLLECTION_ALIASES.get(collection)
     if alias is None:
         # Third-party lexicon. ~2% of commits in M0's window, 61 distinct
         # NSIDs. Counted; payload discarded; NSID not persisted.
-        return ["unclassified.collection"]
+        return ["untracked.collection"]
 
     metrics = [f"{alias}.{operation}"]
 

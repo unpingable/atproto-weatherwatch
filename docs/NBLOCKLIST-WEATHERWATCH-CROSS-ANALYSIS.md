@@ -21,10 +21,10 @@ tells you when to come back.
 
 | where I looked | result |
 |---|---|
-| `/home/jbeck/git/**` (repo dirs, maxdepth 3) | no match for `*block*` except an unrelated governance doc |
+| accessible repository directories | no matching project found |
 | case-insensitive content grep for `nblocklist` across `*.md`, `*.py`, `*.toml`, `*.json` | **zero occurrences anywhere** |
-| production host `/opt`, `/var/lib`, all systemd units | absent |
-| `mac` host `~/git` | absent |
+| accessible deployed service inventory | absent |
+| secondary development checkout | absent |
 
 The nearest block-adjacent project is `nebgraph` — *"local-only tool for
 inspecting observed ATProto block-edge topology inside a user-supplied mutual
@@ -119,13 +119,14 @@ All present and queryable at 60 s resolution: `post.create` (+ `.reply`,
 `repost.create/.delete`, `follow.create/.delete`, `block.create`,
 `block.delete`, `listitem.create/.delete`, `profile.create/.update`,
 `account.event` (+ active/status), `identity.event`, `threadgate.*`,
-`postgate.*`, `actor_status.*`, `unclassified.collection`, plus
+`postgate.*`, `actor_status.*`, `untracked.collection`,
+`malformed.collection`, plus the historical `unclassified.collection` key and
 `_events_total` from `window_health.events_seen`.
 
-The taxonomy split has **not** landed as separate keys — `unclassified.collection`
-still merges "untracked vocabulary" with a never-observed "missing collection"
-failure. The dashboard presents them correctly; the persisted key does not
-distinguish them. See `docs/CANDIDATES.md` C1.
+The taxonomy is separate prospectively: `untracked.collection` is deliberate
+scope and `malformed.collection` is missing/invalid collection input.
+Historical `unclassified.collection` rows cannot be retro-split and remain a
+documented compatibility case. See `docs/CANDIDATES.md` C1.
 
 ---
 
@@ -248,6 +249,7 @@ precede Y" is the strongest claim this design can ever support, and it stays
 true even with months of data. Two systems on one platform share every
 confounder there is — time of day, traffic volume, a single viral thread.
 
-And the framing to avoid inheriting: this is anonymous epidemiology of posting,
-not contact tracing. The moment a design needs to know *which* subject was
-added to answer a question, the question has left this boundary.
+And the framing to avoid inheriting: this would be aggregate,
+identity-omitting telemetry, not contact tracing and not a claim of anonymity.
+The moment a design needs to know *which* subject was added to answer a
+question, the question has left this boundary.

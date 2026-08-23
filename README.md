@@ -5,8 +5,9 @@ activity rates from a Jetstream source and keeps no people. (The name began as
 a disposable handle; it is now load-bearing — deployed path, published URL,
 `/beef` redirect.)
 
-Design candidate: `../CANDIDATE-AGGREGATE-WEATHER-TELEMETRY.md`.
 Measured protocol behaviour: [`M0-VERIFICATION-RESULTS.md`](M0-VERIFICATION-RESULTS.md).
+The paired-observer result also has a concise standalone note:
+[`Public Jetstream observers were not interchangeable in one paired probe`](docs/JETSTREAM-OBSERVER-DIVERGENCE.md).
 
 **Published at <https://weatherwatch.neutral.zone/>** since 2026-08-22; the
 former `labelwatch.neutral.zone/weatherwatch` path and the `/beef` alias both
@@ -27,8 +28,8 @@ post volume, same-endpoint self-control 1.000). The deployed collector runs on
 without making them global. Local z-scores stay self-consistent against a single
 observer; **absolute rates do not**, in either direction. Observed-volume ratios
 are inter-observer comparisons, never coverage figures: there is no canonical
-denominator. See the *Decision record* in the design candidate — resolution is
-paired observers with neither privileged; second collector not yet built.
+denominator. A second collector and any multi-observer reconciliation remain
+out of scope.
 
 ## Social episode sensors (`weatherwatch social`)
 
@@ -39,8 +40,13 @@ synchronisation and account-lifecycle co-occurrence. The subject of every
 detection is the episode, never an account.
 
 The weather lane is unchanged and still keeps no people. Edge custody is off
-by default, writes a separate database, and is not enabled in the deployed
-collector. See [`src/weatherwatch/social/README.md`](src/weatherwatch/social/README.md)
+by default and writes a separate database. The current deployment explicitly
+enables a narrow `block,listitem` edge sink with 24-hour retention; those
+identity-bearing rows and local findings are never published. Public aggregate
+episodes additionally fail closed unless the local store witnesses a
+provisional 10-actor support floor, then expose only hour-coarsened, reduced
+fields. This is disclosure resistance, not anonymity. See
+[`src/weatherwatch/social/README.md`](src/weatherwatch/social/README.md)
 and [`BOUNDARIES.md`](src/weatherwatch/social/BOUNDARIES.md).
 
 ## What it does
@@ -53,11 +59,15 @@ Jetstream (one named endpoint)
   -> ONE transaction: buckets + window health + resume cursor
 ```
 
-What is persisted: integer counts per (run, window, metric), an observation
-health row per window, and a resume cursor. That is all.
+What the weather database persists: integer counts per (run, window, metric),
+an observation health row per window, and a resume cursor. That is all.
 
-What is never persisted, anywhere: raw events, DIDs, handles, rkeys, CIDs,
-URIs, post text, display names, descriptions, alt text, or URLs.
+What the weather database and public artifacts never contain: raw events,
+DIDs, handles, rkeys, CIDs, event-supplied AT URIs, post text, display names,
+descriptions, alt text, or event-supplied URLs. The separately enabled,
+bounded social edge sink deliberately
+retains the minimal identity-bearing edge fields documented in
+[`BOUNDARIES.md`](src/weatherwatch/social/BOUNDARIES.md); it is local-only.
 
 ## Privacy model
 
@@ -65,8 +75,8 @@ The classifier is the identity boundary, and the guarantee is structural
 rather than filter-based: its output alphabet is a **finite frozenset**
 (`classify.ALLOWED_METRICS`, ~90 entries). A DID cannot appear in the output
 because no DID is a member of that set. Tests assert the containment against
-the whole fixture corpus, and a further test asserts that nothing
-identity-shaped reaches any database table.
+the whole fixture corpus, and further tests assert that nothing identity-shaped
+reaches the weather database or any public artifact.
 
 Test fixtures are scrubbed structure captured during M0 — synthetic DIDs use
 the reserved `did:example:` method and synthetic hosts use RFC 2606
@@ -152,12 +162,20 @@ measurements/     M0 aggregate measurements
 ## Tests
 
 ```bash
-python3 -m pytest
+python -m pip install -e ".[dev]"
+./scripts/qualify.sh
 ```
 
-Includes end-to-end collector tests against an in-process fake Jetstream that
+This is the authoritative local and CI qualification: it compile-checks the
+source and tests, runs the fixture privacy tripwire, then runs the complete
+test suite. It includes end-to-end collector tests against an in-process fake Jetstream that
 reproduces the inclusive-cursor semantics M0 measured, so `cursor + 1` is
 exercised rather than assumed.
+
+## License
+
+Licensed under either Apache-2.0 or MIT, at your option. See
+[`LICENSE-APACHE`](LICENSE-APACHE) and [`LICENSE-MIT`](LICENSE-MIT).
 
 ## Conditioning
 
@@ -180,7 +198,7 @@ Derived conditions (`quiet` / `normal` / `elevated` / `surging` / `degrading`)
 are threshold cuts on a z-score against a short trailing baseline of the same
 stream. They are not calibrated against anything and carry no statistical
 warrant. There is no Global Beef Index; the dashboard shows a placeholder
-marked *calibration pending*.
+marked *calibration not assumed*.
 
 ## Product doctrine
 
@@ -210,16 +228,17 @@ label at all. Supervised fitting against remembered events would build a
 ("this combination of primitives is unusual against its own regime") is
 legitimate, and is the only kind on the table.
 
-The placeholder therefore reads *calibration pending* today. If we conclude no
-principled external target exists, that becomes **uncalibrated by design** —
-"pending" must not harden into an implication that validated beef ground truth
-is merely waiting to be collected. Not changed automatically by unrelated work.
+The placeholder therefore reads *calibration not assumed*. It does not imply
+that validated beef ground truth is merely waiting to be collected, and it
+does not claim an uncalibrated formula already exists.
 
 **The primitives are authoritative.** A composite is a hint layer. Nobody
 should have to trust `BEEF = 73` without inspecting the aggregate series that
 produced it; the 16 primitive cards remain the receipts.
 
-**The denominator gets a lawyer.** Every ratio is a two-body system.
+**The denominator gets a lawyer.** Every ratio is a two-body system. The public
+table renders each value in one non-wrapping expression with its numerator and
+denominator counts, so the support cannot fall away from the ratio visually.
 `block/follow` can move because blocks rose, because follows fell, because
 both moved, or because the denominator got too small to mean anything. Never
 narrate a ratio as if only the numerator changed, keep both components
@@ -253,9 +272,8 @@ may make the joke; the instrument must not certify it.
 
 ## Deployment
 
-Deployed privately, dark: static output served from a separate directory by
-the existing web tier, with nothing linking to it, no sitemap entry, and
-`noindex` at both the meta tag and the response header. Operational detail —
-including the URL, the exact route, and rollback — lives in
-`deploy/README.md`, which is the ops doc and not a public one. Publish with
-`./deploy/publish.sh`.
+The public site serves static output from a separate directory, with `noindex`
+at both the meta tag and response header. Public-safe deployment architecture,
+validation, rollback shape, and publication invariants live in
+[`deploy/README.md`](deploy/README.md); credentials, private host paths, and
+deployment authority do not. Publish with `./deploy/publish.sh`.

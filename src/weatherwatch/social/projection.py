@@ -14,18 +14,16 @@ new key is invisible until someone adds it here on purpose.
 
 AUDIENCES
 ---------
-* `public` -- the aggregate tier only. Those episodes are derived entirely
-  from weatherwatch's identity-free minute counters, so there is no actor or
-  target anywhere in their lineage. This is what the published report renders.
+* `public` -- aggregate episodes only, and only after a local cardinality gate.
+  Exact statistics and timing are removed before this view is returned.
 * `local` -- everything, including edge and lifecycle episodes. Not published;
   it is what an operator inspects on the collecting host.
 
-The audience split is by **detector allowlist**, not by scrubbing. Scrubbing
-asks "did I remember to remove the identity?"; an allowlist asks "is this
-whole class of finding derived from data that never had any?" Only the second
-question has a stable answer. `assert_identity_free()` runs anyway, as the
-belt to the allowlist's braces, and it is the same pattern set the publish
-script greps for before bytes leave the machine.
+The audience split begins with a **detector allowlist**, then applies an actor
+support gate and a lossy public projection. No DID is emitted, but that fact
+alone is not treated as anonymity: a precise aggregate can still be joined to
+the public firehose. `assert_identity_free()` remains the final field-shape
+tripwire and the publish script greps the bytes again before they leave.
 
 Note what the audience does *not* do: it does not decide whether identity is
 removed. Because `EpisodeView` is a whitelist, salted actor tokens never reach
@@ -41,6 +39,7 @@ import json
 import re
 import sqlite3
 from dataclasses import asdict, dataclass, field
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from .scope import MAGNITUDE_BANDS
@@ -54,6 +53,22 @@ AUDIENCE_LOCAL = "local"
 #: detectors are structural and non-accusatory, but they are actor-level, so
 #: they stay local.
 PUBLIC_DETECTORS = frozenset({"aggregate_rate_episode"})
+
+#: Public disclosure is gated by actor support observed in the already-local
+#: edge store. This is deliberately an account-cardinality rule, not an event
+#: count rule: one account can create many events. Ten is a provisional
+#: disclosure-resistance floor, not a statistical claim and not anonymity.
+PUBLIC_MIN_ACTORS = 10
+PUBLIC_TIME_BUCKET_S = 3600
+
+#: Aggregate metrics for which the edge store can independently witness actor
+#: support. Anything absent here is suppressed. This mapping is bounded and
+#: contains no collection names supplied by an event.
+PUBLIC_SUPPORT_METRICS = {
+    f"{collection}.{op}": (collection, op)
+    for collection in ("block", "follow", "like", "repost", "listitem")
+    for op in ("create", "update", "delete")
+}
 
 #: Explain keys known to carry actor-level structure. Not used for filtering --
 #: the allowlist does that -- but asserted absent from public views.
@@ -136,11 +151,32 @@ class EpisodeView:
 
 
 @dataclass(frozen=True)
+class PublicEpisodeView:
+    """The deliberately lossy public representation of an episode.
+
+    Exact timestamps, counts, rates, z-scores, shape, and stable identifiers
+    are omitted because their combination can make a nominally aggregate row
+    trivially joinable to publicly observable ATProto activity.
+    """
+
+    period_start: str
+    period_end: str
+    type: str
+    category: str
+    direction: str
+    band: str
+    actor_support: str
+
+    def as_dict(self) -> dict:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
 class SocialProjection:
     audience: str
     available: bool
     reason: str
-    episodes: tuple[EpisodeView, ...] = ()
+    episodes: tuple[EpisodeView | PublicEpisodeView, ...] = ()
     summary: dict = field(default_factory=dict)
     source: dict = field(default_factory=dict)
     sink_receipt: dict | None = None
@@ -218,6 +254,62 @@ def _view(row: sqlite3.Row, audience: str) -> EpisodeView:
     )
 
 
+def _coarse_period(ts_start: str, ts_end: str) -> tuple[str, str]:
+    """Round an episode outward to UTC hour boundaries."""
+    start = datetime.fromisoformat(ts_start.replace("Z", "+00:00"))
+    end = datetime.fromisoformat(ts_end.replace("Z", "+00:00"))
+    start = start.astimezone(timezone.utc).replace(
+        minute=0, second=0, microsecond=0)
+    end = end.astimezone(timezone.utc)
+    end_floor = end.replace(minute=0, second=0, microsecond=0)
+    if end > end_floor:
+        end_floor += timedelta(seconds=PUBLIC_TIME_BUCKET_S)
+    return (
+        start.isoformat().replace("+00:00", "Z"),
+        end_floor.isoformat().replace("+00:00", "Z"),
+    )
+
+
+def _public_view(conn: sqlite3.Connection, row: sqlite3.Row) -> PublicEpisodeView | None:
+    """Return a disclosure-resistant view, or suppress the row.
+
+    The edge query is only an eligibility gate. Actor identifiers never leave
+    this function. Missing tables, unsupported metrics, malformed envelopes,
+    expired retention, and insufficient support all resolve to suppression.
+    """
+    try:
+        env = json.loads(row["envelope_json"])
+        ex = env.get("explain", {})
+        support_key = PUBLIC_SUPPORT_METRICS.get(ex.get("metric"))
+        if support_key is None:
+            return None
+        start_epoch = datetime.fromisoformat(
+            env["ts_start"].replace("Z", "+00:00")).timestamp()
+        end_epoch = datetime.fromisoformat(
+            env["ts_end"].replace("Z", "+00:00")).timestamp()
+        collection, op = support_key
+        support = conn.execute(
+            "SELECT COUNT(DISTINCT actor_did) FROM edge_event "
+            "WHERE collection=? AND op=? AND observed_us>=? AND observed_us<?",
+            (collection, op, int(start_epoch * 1_000_000),
+             int(end_epoch * 1_000_000)),
+        ).fetchone()[0]
+        if support < PUBLIC_MIN_ACTORS:
+            return None
+        start, end = _coarse_period(env["ts_start"], env["ts_end"])
+        return PublicEpisodeView(
+            period_start=start,
+            period_end=end,
+            type=env["type"],
+            category=_TYPE_TO_CATEGORY.get(env["type"], "other"),
+            direction=ex.get("direction", ""),
+            band=_band(env["score"]),
+            actor_support=f"{PUBLIC_MIN_ACTORS}+",
+        )
+    except (KeyError, TypeError, ValueError, sqlite3.Error):
+        return None
+
+
 def _latest_per_episode(rows: list) -> list:
     """One row per `episode_id`, keeping the most recently sealed.
 
@@ -276,6 +368,24 @@ def summarise(views: tuple[EpisodeView, ...]) -> dict:
     }
 
 
+def summarise_public(views: tuple[PublicEpisodeView, ...]) -> dict:
+    if not views:
+        return {"n_disclosed": 0, "by_type": {}, "by_band": {},
+                "by_category": {}, "by_direction": {},
+                "first_period": None, "last_period": None}
+    by = lambda key: {  # noqa: E731
+        k: sum(1 for v in views if getattr(v, key) == k)
+        for k in sorted({getattr(v, key) for v in views})
+    }
+    return {
+        "n_disclosed": len(views),
+        "by_type": by("type"),
+        "by_band": by("band"),
+        "by_category": by("category"),
+        "by_direction": by("direction"),
+        "first_period": min(v.period_start for v in views),
+        "last_period": max(v.period_end for v in views),
+    }
 def load(
     social_db: str | Path,
     audience: str = AUDIENCE_PUBLIC,
@@ -289,6 +399,14 @@ def load(
     src = {"audience": audience, "since": since, "until": until,
            "detector_allowlist": (sorted(PUBLIC_DETECTORS)
                                   if audience == AUDIENCE_PUBLIC else None)}
+    if audience == AUDIENCE_PUBLIC:
+        src["disclosure_policy"] = {
+            "minimum_distinct_actors": PUBLIC_MIN_ACTORS,
+            "time_bucket_seconds": PUBLIC_TIME_BUCKET_S,
+            "exact_statistics_published": False,
+            "stable_episode_identifiers_published": False,
+            "claim": "disclosure resistance; not anonymity",
+        }
 
     if not path.exists():
         return SocialProjection(
@@ -324,21 +442,37 @@ def load(
         sql += " ORDER BY ts_start, sealed_at LIMIT ?"
         params.append(limit)
         rows = conn.execute(sql, params).fetchall()
+
+        n_detections = len(rows)
+        rows = _latest_per_episode(rows)
+        if audience == AUDIENCE_PUBLIC:
+            # Collapse repeated episodes that become the same coarse public
+            # signal. Publishing their multiplicity would restore a rare
+            # temporal signature that coarsening is intended to remove.
+            disclosed = {}
+            for row in rows:
+                view = _public_view(conn, row)
+                if view is not None:
+                    key = (view.period_start, view.period_end, view.type,
+                           view.direction, view.band)
+                    disclosed[key] = view
+            views = tuple(disclosed[k] for k in sorted(disclosed))
+            summary = summarise_public(views)
+        else:
+            views = tuple(_view(r, audience) for r in rows)
+            summary = summarise(views)
+            # Local audit output may disclose re-detection counts; the public
+            # surface does not disclose suppressed or rare signatures.
+            summary["n_detections"] = n_detections
+            summary["n_superseded"] = n_detections - len(views)
     finally:
         conn.close()
-
-    n_detections = len(rows)
-    rows = _latest_per_episode(rows)
-    views = tuple(_view(r, audience) for r in rows)
-    summary = summarise(views)
-    # Disclosed, not silent: the store may hold several sealed detections of
-    # one episode and the page shows one row.
-    summary["n_detections"] = n_detections
-    summary["n_superseded"] = n_detections - len(views)
     proj = SocialProjection(
         audience=audience,
         available=bool(views),
-        reason="" if views else "no episodes in range",
+        reason=("" if views else
+                ("no episodes satisfy the public disclosure policy"
+                 if audience == AUDIENCE_PUBLIC else "no episodes in range")),
         episodes=views,
         summary=summary,
         source=src,

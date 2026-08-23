@@ -99,6 +99,9 @@ class _OpenWindow:
 #: into window_health.unclassified as the schema-drift canary.
 _UNCLASSIFIED_METRICS = frozenset({
     "unclassified.kind",
+    "untracked.collection",
+    "malformed.collection",
+    # Compatibility with windows written before the collection states split.
     "unclassified.collection",
     "unclassified.operation",
     "malformed.commit",
@@ -143,6 +146,8 @@ class Accumulator:
         self._pending_gap_us = 0
         self._pending_resume_seam = False
         self._pending_mid_window_start = True  # the run's first window
+        self._parse_errors_before_first_window = 0
+        self._rejected_before_first_window = 0
 
     # -- signals from the collector ---------------------------------------
 
@@ -169,13 +174,16 @@ class Accumulator:
         if self._open is not None:
             self._open.parse_errors += 1
         else:
-            self._parse_errors_before_first_window = getattr(
-                self, "_parse_errors_before_first_window", 0
-            ) + 1
+            self._parse_errors_before_first_window += 1
 
     def note_rejected_no_time_us(self) -> None:
         if self._open is not None:
             self._open.rejected_no_time_us += 1
+        else:
+            # A frame without stream time cannot choose its own bucket. Carry
+            # it into the first observed window, exactly like a parse failure,
+            # so cold-start faults do not disappear from accounting.
+            self._rejected_before_first_window += 1
 
     # -- the hot path -------------------------------------------------------
 
@@ -230,8 +238,10 @@ class Accumulator:
         w.entered_mid_window = self._pending_mid_window_start
         if not w.entered_mid_window:
             w.observed_from_us = w.window_start_us
-        w.parse_errors = getattr(self, "_parse_errors_before_first_window", 0)
+        w.parse_errors = self._parse_errors_before_first_window
+        w.rejected_no_time_us = self._rejected_before_first_window
         self._parse_errors_before_first_window = 0
+        self._rejected_before_first_window = 0
         self._pending_reconnects = 0
         self._pending_gap_us = 0
         self._pending_resume_seam = False

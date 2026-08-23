@@ -35,8 +35,8 @@ Live since 2026-08-22 on the weatherwatch host:
 | edge custody | **ON** — `block,listitem`, 24h horizon, `/var/lib/weatherwatch/social.sqlite` |
 | detection | `weatherwatch-social-detect.timer`, hourly, `--last 24h` (~1.8s CPU) |
 | published section | `https://weatherwatch.neutral.zone/` § E |
-| read side | `…/weatherwatch/social.json` (`weatherwatch.social/v1`) |
-| published tier | aggregate only — see [`BOUNDARIES.md`](BOUNDARIES.md) |
+| read side | `…/social.json` (`weatherwatch.social/v2`) |
+| published tier | disclosure-qualified, reduced aggregate periods only — see [`BOUNDARIES.md`](BOUNDARIES.md) |
 
 Activation is environment-driven and off unless explicitly set. Both states
 leave a receipt: `meta.social_sink_receipt` in the weather database and
@@ -55,23 +55,27 @@ WW_SOCIAL_WINDOW=48h                # how far back the published section reaches
 ## Read model
 
 ```
-episode store  ->  projection (audience-gated)  ->  social.json  ->  section E
+episode store + local edge support -> projection -> social.json -> section E
 ```
 
 The renderer is handed a `SocialProjection` and no connection, so it cannot
-reach past the read model into a detector table. `EpisodeView` is a whitelist
-built field by field, so a detector that grows a new `explain` key cannot leak
-it onto the page by passthrough.
+reach past the read model. The local `EpisodeView` remains a detailed audit
+view. The separate `PublicEpisodeView` is intentionally lossy: publication
+requires a provisional 10-distinct-actor lower bound from the existing edge
+store, rounds time outward to UTC hours, and omits exact counts, statistics,
+shape, and stable identifiers. Missing support suppresses the episode. This is
+disclosure resistance, not anonymity.
 
 Re-detection is idempotent **at the read model, not in storage**. Re-running a
 pass over a shifted range re-observes episodes already recorded; those are
 genuinely distinct detections (different scope, different coverage, different
 `window_fingerprint`, so a different `det_id`) and every one is kept as the
 audit trail. `episode_id` derives from the evidence segment alone and is
-stable across all of them, so the projection collapses to one row per episode
+stable across all of them, so the local projection collapses to one row per episode
 and reports `n_detections` / `n_superseded` alongside. Measured on the
 deployed store: a second pass turned 1,885 rows into 2,242 while adding 9
-actual episodes.
+actual episodes. The public projection additionally collapses repeated coarse
+signatures and does not enumerate suppressed or collapsed rows.
 
 ## Quick start
 
@@ -178,13 +182,12 @@ two drift apart in fields, constants, public API or hash output.
 ## What this is not
 
 No account scores, no behavioural forecasts, no arbitrary-handle lookup, no
-leaderboards, no public pages, no "who is bad" view, and no type string naming
-a mechanism. See [`BOUNDARIES.md`](BOUNDARIES.md) — those are enforced by test,
-and the list of things that would need re-justification is in there too.
+leaderboards, no account pages, no "who is bad" view, and no type string naming
+a mechanism. The existing public report contains only the reduced aggregate
+periods described above. See [`BOUNDARIES.md`](BOUNDARIES.md).
 
 ## Tests
 
 ```bash
-pytest tests/social -q     # 100 tests
-pytest -q                  # 312, whole instrument
+./scripts/qualify.sh
 ```

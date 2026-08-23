@@ -7,8 +7,8 @@ case and acceptance criteria before anything is implemented.
 
 ## C1 — Split the `unclassified` taxonomy
 
-**Status:** candidate. The misleading *presentation* was fixed on 2026-08-09;
-the underlying key split was not.
+**Status:** done 2026-08-22. The presentation was fixed on 2026-08-09; the
+prospective key split and legacy compatibility landed during public hardening.
 
 ### What `unclassified` actually is
 
@@ -30,10 +30,11 @@ exactly `unclassified.collection`.
 `late_events` are their own `window_health` columns, and "unknown schema" is
 the sum of three separately-keyed metrics (`unclassified.operation`,
 `unclassified.kind`, `malformed.commit`). The dashboard now presents the full
-five-way split with no collector or schema change. Only the last category
-remains imprecise, which is what the key split below would fix.
+five-way split with no collector or schema change. At that point only the last
+category remained imprecise, which is what the later key split fixed.
 
-`classify._classify_commit` returns that one key from two different places:
+Before the split, `classify._classify_commit` returned that one key from two
+different places:
 
 * a commit whose `collection` is missing or empty — a genuine
   observer/schema failure;
@@ -47,22 +48,21 @@ misleading: it read as 121k observer failures when the observer had failed
 zero times. **Fixed in presentation** — untracked vocabulary is now its own
 line, stated as product scope.
 
-### The remaining change (not made)
+### Implemented split
 
 Split the key so the two causes are separable *going forward*:
 
 ```python
 if not isinstance(collection, str) or not collection:
-    return ["unclassified.collection"]     # observer/schema failure
+    return ["malformed.collection"]        # observer/schema failure
 alias = COLLECTION_ALIASES.get(collection)
 if alias is None:
     return ["untracked.collection"]        # product scope
 ```
 
-Three lines, no schema migration (`metric` is a free-text dimension). It was
-not done during the continuous-deployment campaign because it changes
-collector output mid-flight, and the honesty problem it addresses was already
-solved at the presentation layer.
+No table migration is required (`metric` is a bounded text dimension). The
+dashboard reads `malformed.collection` as unknown schema and
+`untracked.collection` as deliberate scope.
 
 ### Historical rows cannot be retro-split
 
@@ -201,7 +201,7 @@ the publish timer going red again.
 
 ## C5 — Give weatherwatch its own FQDN
 
-**Status:** candidate, raised 2026-08-22. Not scoped, not scheduled.
+**Status:** done 2026-08-22.
 
 Weatherwatch is served as *paths* inside Labelwatch's Caddy site block —
 `/weatherwatch` plus the `/beef` alias — rather than from a host of its own.
@@ -215,10 +215,8 @@ works.
 What it touches, none of it decided:
 
 * DNS, plus a certificate — Caddy will want to solve ACME for the new name.
-* The Caddyfile: one 86-line file, **seven site blocks, not under version
-  control**, host convention is timestamped `Caddyfile.bak` copies. The
-  residual risk named in `deploy/README.md` applies unchanged — a malformed
-  config takes all seven sites down, so validate before reload.
+* The shared web-tier configuration. A malformed configuration could affect
+  unrelated sites, so it was validated before reload.
 * `WW_PUBLIC_URL`, and the share card's absolute image URL with it.
 * The `X-Robots-Tag: noindex, nofollow, noarchive` posture. A siloed path that
   nothing links to and a bare hostname are different exposure decisions, and
@@ -237,13 +235,9 @@ form. Not a prerequisite for anything currently shipped.
 writing (`weatherwatch.neutral.zone` did not resolve from the workstation or
 from the serving host).
 
-**Caddy site block added and live.** Appended to
-`/home/jbeck/atproto/Caddyfile`, backed up first as
-`Caddyfile.bak.20260822-222533` per host convention, `caddy validate` run
-*before* the reload because the file carries seven sites and a malformed
-config takes all of them down. Post-reload all seven were re-checked and
-answer as before. `/beef` is kept as an alias on the new host, redirecting to
-`/`.
+**Caddy site block added and live.** The shared configuration was backed up and
+validated before reload, then the canonical site and unrelated sites were
+re-checked. `/beef` is kept as an alias on the new host, redirecting to `/`.
 
 **Robots posture carried over deliberately, not inherited.** The new host
 keeps `X-Robots-Tag: noindex, nofollow, noarchive`. A siloed path nothing
@@ -272,8 +266,8 @@ to a name that does not resolve takes the report offline.
   (`/weatherwatch/summary.json` → `/summary.json`).
 * `WW_PUBLIC_URL` moved with it; the share card carries an absolute URL and
   would otherwise have pointed at a redirect.
-* Two timestamped Caddyfile backups taken, `caddy validate` run before each
-  reload, and all eight hosts re-checked after each.
+* The shared proxy configuration was backed up and validated before each
+  reload, and the affected sites were re-checked afterward.
 
 Both redirects use `path_regexp` with a captured tail rather than
 `strip_prefix`, per the warning already in that file: Caddy orders `redir`

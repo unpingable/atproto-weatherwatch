@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import datetime
 from pathlib import Path
 
 import pytest
@@ -121,6 +122,50 @@ def test_exact_observation_source_appears(report_db, tmp_path):
     assert SYNTH_ENDPOINT in html
     summary = json.loads((out / "summary.json").read_text())
     assert summary["source_endpoint"] == SYNTH_ENDPOINT
+
+
+def test_freshness_and_interval_are_legible_near_the_top(report_db, tmp_path):
+    out = tmp_path / "beef"
+    now = datetime.datetime.fromtimestamp(
+        SYNTH_BASE + 10 * 60 + 60, tz=datetime.timezone.utc)
+    report.generate_report(report_db, out, now=now)
+    html_doc = read_html(out)
+    summary = json.loads((out / "summary.json").read_text())
+    assert summary["freshness"]["state"] == "current"
+    assert "newest complete observation" in html_doc
+    assert "Report interval:" in html_doc
+    assert html_doc.index("data-freshness") < html_doc.index(
+        "A · Observation status")
+
+
+def test_partial_freshness_is_not_presented_as_current(conn, tmp_path):
+    build_run(conn, "r1", [
+        {"metrics": dict(FULL)},
+        {"metrics": dict(FULL), "observed_us": 15_000_000},
+    ])
+    now = datetime.datetime.fromtimestamp(
+        SYNTH_BASE + 2 * 60 + 30, tz=datetime.timezone.utc)
+    out = tmp_path / "beef"
+    report.generate_report(conn, out, now=now)
+    summary = json.loads((out / "summary.json").read_text())
+    assert summary["freshness"]["state"] == "partial"
+    assert 'data-freshness="partial"' in read_html(out)
+
+
+def test_stale_and_unavailable_are_explicit(report_db, tmp_path):
+    stale_now = datetime.datetime.fromtimestamp(
+        SYNTH_BASE + 10 * 60 + 7200, tz=datetime.timezone.utc)
+    out = tmp_path / "beef"
+    report.generate_report(report_db, out, now=stale_now)
+    summary = json.loads((out / "summary.json").read_text())
+    assert summary["freshness"]["state"] == "stale"
+    assert 'data-freshness="stale"' in read_html(out)
+
+    unavailable = report._freshness(
+        [], "2026-01-01T00:00:00Z", bucket_width=60)
+    assert unavailable["state"] == "unavailable"
+    panel = report._freshness_panel(unavailable, None, None).lower()
+    assert "unavailable is not calm" in panel
 
 
 def test_no_relay_described_as_authoritative(report_db, tmp_path):
@@ -756,6 +801,24 @@ def test_legacy_key_ambiguity_is_stated_not_hidden(conn, tmp_path):
     assert "not\n          yet observed" in html_doc or "not yet observed" in html_doc
 
 
+def test_new_collection_taxonomy_separates_scope_from_malformed_input(
+        conn, tmp_path):
+    build_run(conn, "r1", [
+        {"metrics": {**FULL, "untracked.collection": 70,
+                     "malformed.collection": 3}},
+    ])
+    out = tmp_path / "beef"
+    report.generate_report(conn, out)
+    html_doc = read_html(out)
+    failures = html_doc[html_doc.index("Ingest accounting"):]
+    failures = failures[:failures.index("</dd>")]
+    scope = html_doc[html_doc.index("Untracked collection"):]
+    scope = scope[:scope.index("</dd>")]
+    assert "unknown schema 3" in failures
+    assert "70" in scope
+    assert "legacy" not in scope
+
+
 def test_beef_placeholder_keeps_the_joke_and_claims_no_calibration(report_db,
                                                                    tmp_path):
     """The unserious name is deliberate epistemic signalling: a solemn
@@ -844,6 +907,20 @@ def test_ratio_note_states_the_two_body_problem(report_db, tmp_path):
     )
 
 
+def test_ratio_value_is_visually_bound_to_its_numerator_and_denominator(
+        report_db, tmp_path):
+    """A cropped ratio cell must carry the primitive counts with the value."""
+    out = tmp_path / "beef"
+    report.generate_report(report_db, out)
+    html_doc = read_html(out)
+    block_row = html_doc[html_doc.index("block/follow"):]
+    block_row = block_row[:block_row.index("</tr>")]
+    assert "36 block.create / 270 follow.create" in block_row
+    assert "<strong>0.1333</strong>" in block_row
+    assert "ratio-expression" in block_row
+    assert re.search(r"\.ratio-expression\s*\{[^}]*white-space:nowrap", html_doc)
+
+
 def test_every_ratio_component_is_also_a_primitive_card(report_db, tmp_path):
     """The ratio note promises the components appear as their own cards. Keep
     that true: the receipts must exist for every hint."""
@@ -898,9 +975,10 @@ def test_page_denies_the_specific_misreadings(report_db, tmp_path):
     out = tmp_path / "beef"
     report.generate_report(report_db, out)
     low = prose(out).lower()
-    for claim in ("identifies anyone", "reconstructs a social graph",
-                  "reads any post", "detects a dispute"):
+    for claim in ("no account identifiers", "no social graph",
+                  "read no post text", "detect no dispute"):
         assert claim in low, f"missing denial: {claim!r}"
+    assert "not claimed anonymous" in low
     assert "joke name for a composite that does not exist" in low
 
 

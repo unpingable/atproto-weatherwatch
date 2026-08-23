@@ -149,7 +149,14 @@ def test_reply_and_quote_counted_in_both_families(synthetic_fixtures):
 def test_unknown_collection_counted_not_crashed():
     c = classify(commit("com.example.novel.lexicon", "create",
                         record={"$type": "com.example.novel.lexicon"}))
-    assert c.metrics == ("unclassified.collection",)
+    assert c.metrics == ("untracked.collection",)
+
+
+@pytest.mark.parametrize("collection", [None, "", 17])
+def test_missing_or_invalid_collection_is_distinct_from_unknown(collection):
+    msg = commit("app.bsky.feed.post", "create")
+    msg["commit"]["collection"] = collection
+    assert classify(msg).metrics == ("malformed.collection",)
 
 
 def test_unknown_collection_payload_is_not_retained():

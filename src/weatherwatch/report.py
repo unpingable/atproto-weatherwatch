@@ -54,6 +54,12 @@ from .social.config import RECEIPT_META_KEY as _SOCIAL_RECEIPT_KEY
 #: tail -- because an unboundedly growing dashboard is a defect either way.
 REPORT_MAX_WINDOWS = 200_000
 
+#: The deployed publisher runs every five minutes. Freshness is considered
+#: current for two missed publication intervals plus one source bucket. This
+#: is an operational, explicitly provisional threshold, not a statement about
+#: event statistics or relay completeness.
+PUBLICATION_INTERVAL_S = 5 * 60
+
 # --- what to show ----------------------------------------------------------
 
 #: (label, metric-or-metrics). Order is display order; a tuple of metrics is
@@ -235,9 +241,12 @@ td .pill { min-width:5.6em; text-align:center; }
 .scroll { overflow-x:auto; }
 .scroll table { min-width:32rem; }
 .scroll.wide table { min-width:46rem; }
+.ratio-expression { white-space:nowrap; font-variant-numeric:tabular-nums; }
 footer { margin-top:34px; padding-top:14px; border-top:1px solid var(--rule);
          color:var(--muted); font-size:11.5px; }
 .warn { border-left:3px solid var(--partial); padding-left:11px; }
+.freshness { margin:12px 0 18px; border-left:4px solid var(--accent); }
+.freshness strong { text-transform:uppercase; letter-spacing:.05em; }
 .beef { text-align:center; padding:20px; color:var(--muted); }
 .beef .big { font-size:17px; letter-spacing:.13em; color:var(--ink);
              opacity:.55; }
@@ -329,6 +338,75 @@ def _fmt_lag(v: float | None) -> str:
     if v >= health.LAG_CLAMP_MAX_S:
         return f"≥{health.LAG_CLAMP_MAX_S:.0f}s"
     return f"{v:,.3f}s"
+
+
+def _freshness(health_points, generated_at: str, bucket_width: int) -> dict:
+    """Classify the static view without ever turning missing data into calm."""
+    generated = datetime.datetime.fromisoformat(
+        generated_at.replace("Z", "+00:00"))
+    observed = [point for point in health_points if point.observed]
+    complete = [
+        point for point in observed
+        if point.observed_duration_us >= point.bucket_width * 1_000_000
+        and not (point.flags & {
+            query.FLAG_PARTIAL, query.FLAG_GAP, query.FLAG_LOSS,
+            query.FLAG_DEGRADED,
+        })
+    ]
+    newest_observed = max(
+        observed, key=lambda point: point.bucket_start + point.bucket_width,
+        default=None)
+    newest_complete = max(
+        complete, key=lambda point: point.bucket_start + point.bucket_width,
+        default=None)
+    allowance = 2 * PUBLICATION_INTERVAL_S + bucket_width
+
+    if newest_observed is None:
+        state = "unavailable"
+        age_s = None
+    else:
+        observed_end = newest_observed.bucket_start + newest_observed.bucket_width
+        age_s = max(0.0, generated.timestamp() - observed_end)
+        if age_s > allowance:
+            state = "stale"
+        elif newest_complete is None or newest_complete is not newest_observed:
+            state = "partial"
+        else:
+            state = "current"
+
+    return {
+        "state": state,
+        "newest_observation_end": _iso(
+            ((newest_observed.bucket_start + newest_observed.bucket_width)
+             * 1_000_000) if newest_observed else None),
+        "newest_complete_observation_end": _iso(
+            ((newest_complete.bucket_start + newest_complete.bucket_width)
+             * 1_000_000) if newest_complete else None),
+        "age_seconds": age_s,
+        "current_threshold_seconds": allowance,
+        "basis": ("provisional: two 5-minute publication intervals plus one "
+                  "source bucket"),
+    }
+
+
+def _freshness_panel(freshness: dict, first: int | None,
+                     last: int | None) -> str:
+    state = freshness["state"]
+    meanings = {
+        "current": "newest observed window is complete and within the refresh budget",
+        "partial": "newest observation is incomplete; do not read it as current conditions",
+        "stale": "newest observation is older than the refresh budget",
+        "unavailable": "no observed window is available; unavailable is not calm",
+    }
+    return f"""<div class="panel freshness" data-freshness="{_esc(state)}">
+<strong>{_esc(state)}</strong> — {_esc(meanings[state])}<br>
+Report interval: {_esc(_iso(first * 1_000_000 if first is not None else None))}
+→ {_esc(_iso(last * 1_000_000 if last is not None else None))} ·
+newest complete observation: {_esc(freshness['newest_complete_observation_end'])} ·
+newest observation: {_esc(freshness['newest_observation_end'])}
+<div class="note">Freshness budget: {_fmt(freshness['current_threshold_seconds'], 0)}s
+({_esc(freshness['basis'])}). This is a static report, never a live gauge.</div>
+</div>"""
 
 
 # --- SVG -------------------------------------------------------------------
@@ -458,26 +536,18 @@ def _section_status(runs, health_points, latest, metric_totals) -> str:
         f"{_esc(k)} {v}" for k, v in sorted(counts.items(), key=lambda kv: -kv[1])
     )
 
-    # `window_health.unclassified` is, measurably, entirely
-    # `unclassified.collection` — and that key is emitted almost exclusively
-    # for valid records from collections we deliberately do not track. Showing
-    # it beside parse/rejected/late implied the observer had failed 121k times
-    # when it had failed zero times. Separated, and named for what it is.
-    # The five-way split the taxonomy needs is already available in persisted
-    # data, with one caveat. parse_errors / rejected_no_time_us / late_events
-    # are their own window_health columns. "unknown schema" is the sum of three
-    # separately-keyed metrics. Only "untracked collection" is imprecise:
-    # `unclassified.collection` is emitted both for a commit with no collection
-    # at all (a real failure) and for a commit from a collection outside the
-    # vocabulary (deliberate scope). The first has never been observed — M0 saw
-    # `collection` present on 197,926/197,926 commits — so the count is read as
-    # untracked, and the residual ambiguity is stated rather than hidden.
+    # Collection states are separate prospectively: an unsupported NSID is
+    # deliberate scope (`untracked.collection`), while a missing/invalid value
+    # is malformed input (`malformed.collection`). Historical databases may
+    # contain the old ambiguous `unclassified.collection` key; retain it in the
+    # displayed scope total and state the compatibility assumption explicitly.
     unknown_schema = sum(
         metric_totals.get(k, 0)
         for k in ("unclassified.operation", "unclassified.kind",
-                  "malformed.commit")
+                  "malformed.commit", "malformed.collection")
     )
-    untracked = metric_totals.get("unclassified.collection", 0)
+    legacy_untracked = metric_totals.get("unclassified.collection", 0)
+    untracked = metric_totals.get("untracked.collection", 0) + legacy_untracked
     total_events = sum(r.events for r in runs)
     untracked_pct = (f" events ({100 * untracked / total_events:.2f}% of observed)"
                      if total_events else " events")
@@ -485,7 +555,7 @@ def _section_status(runs, health_points, latest, metric_totals) -> str:
         " Counted under the legacy <code>unclassified.collection</code> key, "
         "which would also capture a commit carrying no collection — a case not "
         "yet observed."
-    ) if untracked else ""
+    ) if legacy_untracked else ""
 
     saturated = any(v >= health.LAG_CLAMP_MAX_S for v in lag_vals + lag_max)
     lag_note = (
@@ -578,14 +648,27 @@ def _section_conditions(conn, run_ids, series_map, totals_series) -> str:
         if a is None or b is None:
             continue
         pts = derive.ratio_series(a, b)
-        vals = [p.value for p in pts if p.value is not None]
+        valued = [p for p in pts if p.value is not None]
         overall = derive.ratio(a.total, b.total)
+        low = min(valued, key=lambda point: point.value) if valued else None
+        high = max(valued, key=lambda point: point.value) if valued else None
+
+        def expression(numerator, denominator, value):
+            if value is None:
+                return "—"
+            return (
+                '<span class="ratio-expression">'
+                f'{_fmt(numerator, 0)} {_esc(num)} / '
+                f'{_fmt(denominator, 0)} {_esc(den)} = '
+                f'<strong>{_fmt(value, 4)}</strong></span>'
+            )
+
         rows.append(
             f"<tr><td>{_esc(label)}</td>"
-            f"<td class='num'>{_fmt(overall, 4)}</td>"
-            f"<td class='num'>{_fmt(min(vals) if vals else None, 4)}</td>"
-            f"<td class='num'>{_fmt(max(vals) if vals else None, 4)}</td>"
-            f"<td class='num'>{len(vals)}</td></tr>"
+            f"<td>{expression(a.total, b.total, overall)}</td>"
+            f"<td>{expression(low.numerator, low.denominator, low.value) if low else '—'}</td>"
+            f"<td>{expression(high.numerator, high.denominator, high.value) if high else '—'}</td>"
+            f"<td class='num'>{len(valued)}</td></tr>"
         )
 
     dep_rows = []
@@ -625,7 +708,9 @@ def _section_conditions(conn, run_ids, series_map, totals_series) -> str:
 <div class="panel" style="margin-bottom:12px">{total_line}</div>
 <div class="grid g2">
   <div class="panel scroll">
-    <table><thead><tr><th>ratio</th><th>overall</th><th>min</th><th>max</th>
+    <table><thead><tr><th>ratio</th><th>overall: numerator / denominator = ratio</th>
+    <th>min window: numerator / denominator = ratio</th>
+    <th>max window: numerator / denominator = ratio</th>
     <th>windows</th></tr></thead><tbody>{''.join(rows)}</tbody></table>
   </div>
   <div class="panel scroll">
@@ -687,7 +772,12 @@ def _section_beef() -> str:
 
 def _build_html(conn, run_ids, runs, latest, series_map, totals_series,
                 health_points, metric_totals, generated_at,
-                public_url, social_projection=None) -> str:
+                public_url, social_projection=None, freshness=None) -> str:
+    first = min((point.bucket_start for point in health_points), default=None)
+    last = max((point.bucket_start + point.bucket_width for point in health_points),
+               default=None)
+    freshness = freshness or _freshness(
+        health_points, generated_at, latest.bucket_width)
     return f"""<!doctype html>
 <html lang="en"><head>
 <meta charset="utf-8">
@@ -700,9 +790,11 @@ def _build_html(conn, run_ids, runs, latest, series_map, totals_series,
 <p class="sub warn"><strong>Despite the name, this does not measure conflict,
 sentiment, users, or content.</strong> It counts how fast aggregate ATProto
 events occur — posts, likes, follows, blocks, deletes — and how well it is
-observing them. Nothing here identifies anyone, reconstructs a social graph,
-reads any post, or detects a dispute. <em>Global Beef Index</em> is a joke
-name for a composite that does not exist.</p>
+observing them. Public artifacts contain no account identifiers, no social
+graph, read no post text, and detect no dispute. Disclosure-limited social
+periods are not claimed anonymous. <em>Global Beef Index</em> is a joke name for
+a composite that does not exist.</p>
+{_freshness_panel(freshness, first, last)}
 <p class="sub">Cortisol accounting for the ATProto firehose — event velocity,
 not affect. Aggregate activity observed from
 <strong>{_esc(latest.endpoint)}</strong> during the stated observation
@@ -725,20 +817,23 @@ or completeness figure: neither observer has a canonical denominator.</p>
 {_section_beef()}
 <footer>
 Generated {_esc(generated_at)} · collector v{_esc(COLLECTOR_VERSION)} ·
-aggregate counters only — no DIDs, handles, record keys, CIDs, URIs or text
-are collected or stored. Monotonic stream time is not evidence of complete
-observation.
+public artifacts contain no DIDs, handles, record keys, CIDs, event-supplied AT
+URIs or text.
+The bounded local edge custody stated above is not published. Monotonic stream
+time is not evidence of complete observation.
 </footer>
 </div></body></html>"""
 
 
 def _summary_json(runs, latest, series_map, totals_series, health_points,
-                  generated_at) -> dict:
+                  generated_at, freshness=None) -> dict:
     first = min((p.bucket_start for p in health_points), default=None)
     last = max((p.bucket_start + p.bucket_width for p in health_points),
                default=None)
     span_s = (last - first) if (first is not None and last is not None) else 0
     observed_s = sum(p.observed_seconds for p in health_points if p.observed)
+    freshness = freshness or _freshness(
+        health_points, generated_at, latest.bucket_width)
     return {
         "interval": {
             "first_bucket_start": first,
@@ -748,6 +843,7 @@ def _summary_json(runs, latest, series_map, totals_series, health_points,
             "coverage_ratio": (observed_s / span_s) if span_s else None,
         },
         "generated_at": generated_at,
+        "freshness": freshness,
         "collector_version": COLLECTOR_VERSION,
         "claim": ("Aggregate activity observed from this Jetstream source "
                   "during the stated observation interval."),
@@ -885,11 +981,12 @@ def generate_report(
     window_s = int(timeutil.parse_duration(social_window)) if social_window \
         else None
     social = _load_social(conn, social_db, window_s)
+    freshness = _freshness(health_points, generated_at, latest.bucket_width)
     html_doc = _build_html(conn, run_ids, runs, latest, series_map,
                            totals_series, health_points, metric_totals,
-                           generated_at, public_url, social)
+                           generated_at, public_url, social, freshness)
     summary = _summary_json(runs, latest, series_map, totals_series,
-                            health_points, generated_at)
+                            health_points, generated_at, freshness)
 
     tmp = out_dir.parent / f".{out_dir.name}.tmp-{os.getpid()}"
     if tmp.exists():
