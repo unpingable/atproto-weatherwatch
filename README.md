@@ -46,17 +46,20 @@ by default and writes a separate database. The current deployment explicitly
 enables a narrow `block,listitem` edge sink with 24-hour retention; those
 identity-bearing rows and local findings are never published. Public aggregate
 episodes additionally fail closed unless the local store witnesses a
-provisional 10-actor support floor, then expose only hour-coarsened, reduced
-fields. This is disclosure resistance, not anonymity. See
-[`src/weatherwatch/social/README.md`](src/weatherwatch/social/README.md)
-and [`BOUNDARIES.md`](src/weatherwatch/social/BOUNDARIES.md).
+provisional 10-actor support floor **and** — for a rate excess — no single
+actor could have produced the whole departure, then expose only
+hour-coarsened, reduced fields. This is disclosure resistance, not anonymity;
+what each gate does and does not establish is set out, with the adversarial
+case that forced the second one, in
+[`BOUNDARIES.md`](src/weatherwatch/social/BOUNDARIES.md). Overview:
+[`src/weatherwatch/social/README.md`](src/weatherwatch/social/README.md).
 
 ## What it does
 
 ```
 Jetstream (one named endpoint)
   -> classify transiently          identity read, never returned
-  -> increment in-memory counters  ~90 possible keys, no free text
+  -> increment in-memory counters  63 possible keys, no free text
   -> close 60s windows by stream clock
   -> ONE transaction: buckets + window health + resume cursor
 ```
@@ -75,7 +78,7 @@ retains the minimal identity-bearing edge fields documented in
 
 The classifier is the identity boundary, and the guarantee is structural
 rather than filter-based: its output alphabet is a **finite frozenset**
-(`classify.ALLOWED_METRICS`, ~90 entries). A DID cannot appear in the output
+(`classify.ALLOWED_METRICS`, 63 entries). A DID cannot appear in the output
 because no DID is a member of that set. Tests assert the containment against
 the whole fixture corpus, and further tests assert that nothing identity-shaped
 reaches the weather database or any public artifact.
@@ -198,9 +201,13 @@ nothing, and its counts stay usable.
 
 Derived conditions (`quiet` / `normal` / `elevated` / `surging` / `degrading`)
 are threshold cuts on a z-score against a short trailing baseline of the same
-stream. They are not calibrated against anything and carry no statistical
-warrant. There is no Global Beef Index; the dashboard shows a placeholder
-marked *calibration not assumed*.
+stream, with an effect-size floor in front of them: a change smaller than
+`derive.MIN_LABEL_EFFECT` is reported as `normal` however significant it is,
+because a near-flat baseline makes a 3% move enormously significant and a
+reader cannot un-see a red word. Both gates are uncalibrated and carry no
+statistical warrant; the z, baseline and percent change are all still printed
+unmodified beside the label. There is no Global Beef Index; the dashboard
+shows a placeholder marked *calibration not assumed*.
 
 ## Product doctrine
 
@@ -240,7 +247,13 @@ produced it; the 16 primitive cards remain the receipts.
 
 **The denominator gets a lawyer.** Every ratio is a two-body system. The public
 table renders each value in one non-wrapping expression with its numerator and
-denominator counts, so the support cannot fall away from the ratio visually.
+denominator counts, so the support cannot fall away from the ratio visually,
+and window extremes are drawn only from windows whose denominator reached
+`report.MIN_RATIO_DENOMINATOR` — a legibility floor, stated as such on the
+page, not a statistical one. Excluded windows are counted in their own column
+rather than dropped. The guard is structural because a prose caveat does not
+travel with a screenshot: `block/follow = 22.75` off a four-event denominator
+crops into a social index.
 `block/follow` can move because blocks rose, because follows fell, because
 both moved, or because the denominator got too small to mean anything. Never
 narrate a ratio as if only the numerator changed, keep both components

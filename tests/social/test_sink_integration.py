@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 
-from weatherwatch import query, timeutil
+from weatherwatch import db, query, timeutil
 from weatherwatch.collector import Collector
 from weatherwatch.social import store
 from weatherwatch.social.sink import SocialSink
@@ -136,3 +136,47 @@ def test_retention_horizon_prunes_on_flush(tmp_path):
     remaining = conn.execute("SELECT COUNT(*) FROM edge_event").fetchone()[0]
     assert remaining == 1, "the older edge is past the horizon"
     conn.close()
+
+
+def _weather_state(conn, run_id: str) -> dict:
+    """Everything the weather lane persists for a run, as comparable values."""
+    buckets = conn.execute(
+        "SELECT bucket_start, metric, count FROM bucket WHERE run_id=? "
+        "ORDER BY bucket_start, metric", (run_id,)).fetchall()
+    health = conn.execute(
+        "SELECT bucket_start, bucket_width, observed_duration_us, events_seen, "
+        "parse_errors, rejected_no_time_us, late_events, unclassified, "
+        "coverage_state, gap_us, resume_seam "
+        "FROM window_health WHERE run_id=? ORDER BY bucket_start",
+        (run_id,)).fetchall()
+    return {"buckets": [tuple(r) for r in buckets],
+            "health": [tuple(r) for r in health]}
+
+
+def test_aggregate_counters_are_identical_with_the_sink_on_and_off(
+        conn, tmp_path):
+    """The guarantee the two-lane design rests on, pinned.
+
+    The social sink observes the same parsed message the classifier does. If
+    enabling it moved a single counter, every published aggregate number would
+    silently depend on a local custody setting — and the weather lane's claim
+    to be unchanged by the social lane would be prose rather than a property.
+    """
+    messages = _msgs()
+
+    without = _drive(conn, None, messages)
+    plain = _weather_state(conn, without.run_id)
+
+    other = db.connect(tmp_path / "second.sqlite")
+    db.init_db(other)
+    sink = SocialSink.open(tmp_path / "social.sqlite", run_id="run-with")
+    with_sink = _drive(other, sink, messages)
+    sunk = _weather_state(other, with_sink.run_id)
+    sink.conn.close()
+    other.close()
+
+    assert plain["buckets"] == sunk["buckets"], (
+        "enabling edge custody changed an aggregate counter")
+    assert plain["health"] == sunk["health"], (
+        "enabling edge custody changed observation-health accounting")
+    assert plain["buckets"], "the comparison must not be vacuous"

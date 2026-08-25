@@ -13,6 +13,7 @@ If argument 1 ever fails, the design has been broken, not just a test.
 
 from __future__ import annotations
 
+import pathlib
 import re
 
 from weatherwatch.classify import ALLOWED_METRICS, Classification, classify
@@ -53,6 +54,26 @@ def test_output_alphabet_is_finite_and_enumerable():
         assert len(m) < 64, f"metric {m!r} is suspiciously long"
         for name, pat in FORBIDDEN_PATTERNS.items():
             assert not pat.search(m), f"metric {m!r} matches forbidden {name}"
+
+
+def test_the_published_alphabet_size_is_the_actual_one():
+    """The repository states this number in four public places — the README
+    twice, `BOUNDARIES.md`, and `classify.py` itself — as the size of the
+    identity boundary. It read `~90` against an actual 63 until 2026-08-24.
+
+    The privacy guarantee never depended on the figure; a public claim about
+    an inspectable structure being wrong by 40% still costs the thing the
+    figure was there to buy. Pinning it makes a change deliberate.
+    """
+    assert len(ALLOWED_METRICS) == 63
+
+    root = pathlib.Path(__file__).resolve().parent.parent
+    claims = (root / "README.md", root / "src/weatherwatch/social/BOUNDARIES.md",
+              root / "src/weatherwatch/classify.py")
+    for path in claims:
+        text = path.read_text(encoding="utf-8")
+        assert "~90" not in text, f"{path.name} still claims ~90 metrics"
+        assert "63" in text, f"{path.name} no longer states the alphabet size"
 
 
 def test_every_fixture_output_is_within_the_allowed_alphabet(all_fixtures):

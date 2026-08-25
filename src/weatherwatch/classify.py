@@ -98,7 +98,10 @@ def _build_allowed_metrics() -> frozenset[str]:
     # Schema-drift canaries. Deliberately unparameterised: recording *which*
     # unknown NSID appeared would make `metric` unbounded-cardinality and
     # would put third-party lexicon names into the product data. The count is
-    # the canary; the breakdown is logged to STATS, never persisted.
+    # the canary, and there is no breakdown anywhere -- not in the database,
+    # not in the artifacts, and not in the collector's STATS line, which emits
+    # scalar counts only. A canary that names the thing it saw would be the
+    # schema-leak channel it exists to warn about.
     m.add("unclassified.kind")
     m.add("untracked.collection")
     m.add("malformed.collection")
@@ -107,7 +110,10 @@ def _build_allowed_metrics() -> frozenset[str]:
     return frozenset(m)
 
 
-#: Every value `classify` can ever emit. Finite, ~90 entries, no free text.
+#: Every value `classify` can ever emit. Finite, 63 entries, no free text.
+#: The count is asserted in `tests/test_classify_privacy.py`: the size of the
+#: identity boundary is a published figure, and a published figure that drifts
+#: is worse than no figure. Changing it is a deliberate act, not a side effect.
 ALLOWED_METRICS: frozenset[str] = _build_allowed_metrics()
 
 

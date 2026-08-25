@@ -124,3 +124,66 @@ def test_ordinary_valid_input_leaves_all_accounting_zero(conn):
     _assert_only(window, "parse_errors", value=0)
     assert window.events_seen == 2
     assert window.counts == {"post.create": 2}
+
+
+# --- the canary must not become the leak -----------------------------------
+
+NOVEL_NSID = "com.example.novel.lexicon"
+
+
+def test_an_unknown_nsid_never_reaches_the_database_or_a_public_artifact(
+        conn, tmp_path, caplog):
+    """`untracked.collection` is a schema-drift canary. A canary that names
+    the thing it saw would be the unbounded-cardinality channel it exists to
+    warn about — so the NSID must be absent from the counters, the persisted
+    rows, the rendered page, both JSON artifacts, and the collector's log.
+    """
+    import logging
+
+    from weatherwatch import report
+
+    collector = _collector(conn)
+    collector._start_run()
+    with caplog.at_level(logging.INFO):
+        collector._handle_raw(json.dumps(_event()))
+        collector._handle_raw(json.dumps(
+            _event(BASE_US + 1, collection=NOVEL_NSID)))
+        collector._handle_raw(json.dumps(_event(BASE_US + WIDTH_US)))
+        collector.acc.close_for_shutdown()
+        collector._flush_pending()
+    collector._end_run()
+
+    persisted = {row[0] for row in conn.execute("SELECT DISTINCT metric FROM bucket")}
+    assert "untracked.collection" in persisted, "the canary must have fired"
+    assert NOVEL_NSID not in persisted
+    assert not any(NOVEL_NSID in metric for metric in persisted)
+    assert "example" not in " ".join(persisted)
+
+    # Nowhere else in the database either — every text column of every table.
+    for (table,) in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'").fetchall():
+        for row in conn.execute(f"SELECT * FROM {table}").fetchall():
+            assert NOVEL_NSID not in " ".join(str(v) for v in row), table
+
+    report.generate_report(conn, tmp_path / "site")
+    for artifact in ("index.html", "summary.json", "social.json"):
+        text = (tmp_path / "site" / artifact).read_text()
+        assert NOVEL_NSID not in text, f"{artifact} names the unknown NSID"
+        assert "novel.lexicon" not in text
+
+    assert NOVEL_NSID not in caplog.text, "the NSID reached the log"
+
+
+def test_the_canary_stays_bounded_under_many_distinct_unknown_nsids(conn):
+    """Cardinality is the property, not merely absence of one name: a hundred
+    novel lexicons must produce one key, not a hundred."""
+    collector = _collector(conn)
+    collector._handle_raw(json.dumps(_event()))
+    for index in range(100):
+        collector._handle_raw(json.dumps(_event(
+            BASE_US + 1 + index, collection=f"com.example.lex{index:03d}")))
+    window = _close_first(collector)
+
+    assert window.counts == {"post.create": 1, "untracked.collection": 100}
+    assert len(window.counts) == 2
+    _assert_only(window, "unclassified", value=100)

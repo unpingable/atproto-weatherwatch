@@ -81,10 +81,15 @@ and identities are excluded from the published receipt. Exact edge rows and
 local detector envelopes never enter the static output.
 
 Public aggregate episodes are additionally gated by `social/projection.py`:
-at least ten distinct locally observed actor DIDs are required, output times
-are coarsened to UTC hours, and exact counts/statistics/stable episode IDs are
-removed. Missing support suppresses the episode. This is provisional
-disclosure resistance, not anonymity.
+at least ten distinct locally observed actor DIDs must have performed the same
+action during the period; for a rate *excess*, no single actor may have
+emitted as many events as the departure itself; output times are coarsened to
+UTC hours; and exact counts/statistics/stable episode IDs are removed. Missing
+or uncomputable support suppresses the episode. This is provisional disclosure
+resistance, not anonymity — `src/weatherwatch/social/BOUNDARIES.md` states
+what each gate does and does not establish, including the adversarial case
+that forced the second one and why the hour rounding is not the load-bearing
+control.
 
 ## Publishing
 
