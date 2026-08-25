@@ -46,13 +46,39 @@ def bucket_start_for(time_us: int, width_s: int) -> int:
 
 
 def to_epoch(iso: str | None) -> float | None:
-    """Parse an ISO8601 stamp we wrote ourselves back to unix seconds."""
+    """Parse an ISO8601 stamp back to unix seconds. UTC unless told otherwise.
+
+    Two portability hazards, both of which fail *silently* — the wrong answer
+    is `None` or an offset hour, never an exception:
+
+    1. **`Z` before Python 3.11.** `datetime.fromisoformat` did not accept a
+       trailing `Z` until 3.11, and this codebase writes `Z` stamps in the
+       report, the artifacts, and the social observation records. On 3.10 —
+       which is what the serving host runs — every one of those parsed to
+       `None`, and each caller treated that as "no timestamp available" rather
+       than as a parse failure. Caught by CI on 2026-08-25, when the social
+       instrument's new staleness check quietly stopped detecting staleness on
+       3.10 alone: a stopped station would have kept reading as weather, which
+       is the exact failure the check exists to prevent. `--since` / `--until`
+       took the same path and silently widened to unbounded.
+
+    2. **Naive stamps.** `.timestamp()` on a naive datetime resolves it in the
+       machine's *local* zone. Everything here is UTC, so a naive stamp is
+       read as UTC rather than as wherever the collector happens to be. An
+       explicit offset in the string is always honoured.
+    """
     if not iso:
         return None
+    text = iso.strip()
+    if text.endswith(("Z", "z")):
+        text = text[:-1] + "+00:00"
     try:
-        return datetime.datetime.fromisoformat(iso).timestamp()
+        parsed = datetime.datetime.fromisoformat(text)
     except ValueError:
         return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=datetime.timezone.utc)
+    return parsed.timestamp()
 
 
 def parse_duration(text: str) -> float:
