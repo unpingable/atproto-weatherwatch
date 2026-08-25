@@ -58,6 +58,14 @@ PUBLIC_DETECTORS = frozenset({"aggregate_rate_episode"})
 #: edge store. This is deliberately an account-cardinality rule, not an event
 #: count rule: one account can create many events. Ten is a provisional
 #: disclosure-resistance floor, not a statistical claim and not anonymity.
+#:
+#: **What this counts, exactly.** Distinct actors performing the same
+#: collection and operation *anywhere in the observed stream* during the
+#: episode interval. That is ambient cardinality, not the cardinality of the
+#: departure. On a live network the two diverge badly: `block.create` runs
+#: around 5/s, so any interval contains hundreds of unrelated actors and the
+#: floor is satisfied no matter who produced the excess. Demonstrated in
+#: `test_a_one_actor_excess_is_not_excluded_by_ambient_cardinality_alone`.
 PUBLIC_MIN_ACTORS = 10
 PUBLIC_TIME_BUCKET_S = 3600
 
@@ -69,6 +77,27 @@ PUBLIC_SUPPORT_METRICS = {
     for collection in ("block", "follow", "like", "repost", "listitem")
     for op in ("create", "update", "delete")
 }
+
+#: Second gate, for `excess` episodes only, closing what the cardinality floor
+#: above does not: an episode whose entire departure could have been produced
+#: by one account.
+#:
+#: The rule needs no invented constant. The detector already records how many
+#: events fell inside the episode and what the baseline rate was, so the
+#: *excess* over baseline is arithmetic. If any single actor emitted at least
+#: that many events of the same collection and operation during the interval,
+#: that actor alone could account for the whole departure, and publishing the
+#: episode points an observer at an interval they would otherwise have to find
+#: for themselves. Such episodes are suppressed.
+#:
+#: Deliberately not applied to `deficit` episodes: a lull is an absence, and no
+#: single account can account for events that did not happen. Deficits keep the
+#: cardinality floor alone.
+#:
+#: This is a threshold-free comparison, not a concentration score, and it
+#: computes no per-actor output: the query returns one integer, the largest
+#: per-actor event count, and no actor value leaves this module.
+DOMINANCE_GATE = "single actor could account for the whole excess"
 
 #: Explain keys known to carry actor-level structure. Not used for filtering --
 #: the allowlist does that -- but asserted absent from public views.
@@ -296,6 +325,9 @@ def _public_view(conn: sqlite3.Connection, row: sqlite3.Row) -> PublicEpisodeVie
         ).fetchone()[0]
         if support < PUBLIC_MIN_ACTORS:
             return None
+        if ex.get("direction") == "excess" and not _excess_is_distributed(
+                conn, collection, op, start_epoch, end_epoch, ex):
+            return None
         start, end = _coarse_period(env["ts_start"], env["ts_end"])
         return PublicEpisodeView(
             period_start=start,
@@ -308,6 +340,48 @@ def _public_view(conn: sqlite3.Connection, row: sqlite3.Row) -> PublicEpisodeVie
         )
     except (KeyError, TypeError, ValueError, sqlite3.Error):
         return None
+
+
+def _excess_is_distributed(conn, collection, op, start_epoch, end_epoch,
+                           ex: dict) -> bool:
+    """False when one actor could have produced the whole excess.
+
+    The cardinality floor above counts *ambient* actors in the interval, which
+    on a live network is satisfied by unrelated traffic regardless of who
+    caused the departure. This closes that: if the busiest single actor in the
+    interval emitted at least as many events as the episode's excess over
+    baseline, the episode is one account's activity wearing an aggregate's
+    clothes, and publishing it narrows an observer's search to that hour.
+
+    Fails closed. A missing count, an unusable baseline, a zero-length
+    interval, or a database error all return False, because "cannot tell" and
+    "safe to publish" are different answers.
+
+    No actor value is read out. The query returns one integer.
+    """
+    events = ex.get("events_in_episode")
+    baseline_eps = ex.get("baseline_rate_eps")
+    if not isinstance(events, int) or not isinstance(
+            baseline_eps, (int, float)):
+        return False
+    duration_s = end_epoch - start_epoch
+    if duration_s <= 0:
+        return False
+    excess = events - (baseline_eps * duration_s)
+    if excess <= 0:
+        # Labelled an excess but not measurably above baseline. Nothing to
+        # attribute, and nothing to publish either.
+        return False
+    top = conn.execute(
+        "SELECT COUNT(*) AS n FROM edge_event "
+        "WHERE collection=? AND op=? AND observed_us>=? AND observed_us<? "
+        "GROUP BY actor_did ORDER BY n DESC LIMIT 1",
+        (collection, op, int(start_epoch * 1_000_000),
+         int(end_epoch * 1_000_000)),
+    ).fetchone()
+    if top is None:
+        return False
+    return top[0] < excess
 
 
 def _latest_per_episode(rows: list) -> list:
@@ -386,6 +460,30 @@ def summarise_public(views: tuple[PublicEpisodeView, ...]) -> dict:
         "first_period": min(v.period_start for v in views),
         "last_period": max(v.period_end for v in views),
     }
+
+
+def public_disclosure_policy() -> dict:
+    """The published policy, in one place.
+
+    Built by a function rather than inlined at the one call site because the
+    artifact states its policy even when it has no episodes to apply it to:
+    "no rows this time" and "no policy" are different facts, and a reader who
+    cannot tell them apart has learned nothing from an empty file.
+    """
+    return {
+        "minimum_distinct_actors": PUBLIC_MIN_ACTORS,
+        "minimum_distinct_actors_measures": (
+            "ambient actor cardinality for the collection and operation "
+            "during the interval, not the cardinality of the departure"),
+        "excess_dominance_suppression": DOMINANCE_GATE,
+        "time_bucket_seconds": PUBLIC_TIME_BUCKET_S,
+        "time_coarsening_is_load_bearing": False,
+        "exact_statistics_published": False,
+        "stable_episode_identifiers_published": False,
+        "claim": "disclosure resistance; not anonymity",
+    }
+
+
 def load(
     social_db: str | Path,
     audience: str = AUDIENCE_PUBLIC,
@@ -400,13 +498,7 @@ def load(
            "detector_allowlist": (sorted(PUBLIC_DETECTORS)
                                   if audience == AUDIENCE_PUBLIC else None)}
     if audience == AUDIENCE_PUBLIC:
-        src["disclosure_policy"] = {
-            "minimum_distinct_actors": PUBLIC_MIN_ACTORS,
-            "time_bucket_seconds": PUBLIC_TIME_BUCKET_S,
-            "exact_statistics_published": False,
-            "stable_episode_identifiers_published": False,
-            "claim": "disclosure resistance; not anonymity",
-        }
+        src["disclosure_policy"] = public_disclosure_policy()
 
     if not path.exists():
         return SocialProjection(

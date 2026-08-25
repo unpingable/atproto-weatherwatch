@@ -35,7 +35,7 @@ Live since 2026-08-22 on the weatherwatch host:
 | edge custody | **ON** — `block,listitem`, 24h horizon, `/var/lib/weatherwatch/social.sqlite` |
 | detection | `weatherwatch-social-detect.timer`, hourly, `--last 24h` (~1.8s CPU) |
 | published section | `https://weatherwatch.neutral.zone/` § E |
-| read side | `…/social.json` (`weatherwatch.social/v2`) |
+| read side | `…/social.json` (`weatherwatch.social/v3`) |
 | published tier | disclosure-qualified, reduced aggregate periods only — see [`BOUNDARIES.md`](BOUNDARIES.md) |
 
 Activation is environment-driven and off unless explicitly set. Both states

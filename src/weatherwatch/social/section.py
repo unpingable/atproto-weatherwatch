@@ -101,8 +101,8 @@ def _episode_rows(episodes) -> str:
             f"<td>{_esc(episode.direction)}</td>"
             f'<td><span class="pill mag-{_esc(episode.band)}">'
             f"{_esc(episode.band)}</span></td>"
-            f"<td>{_esc(episode.actor_support)} distinct actors observed "
-            "locally</td></tr>"
+            f"<td>{_esc(episode.actor_support)} distinct actors acting "
+            "locally in the period</td></tr>"
         )
     return "".join(rows)
 
@@ -126,13 +126,22 @@ departed from its own trailing baseline. No account identifier is published.
 That alone is <strong>not anonymity</strong>: precise aggregate timing and
 counts can be joined back to the public firehose. Publication therefore fails
 closed unless the existing local edge store independently observed at least
-{_esc(min_actors)} distinct actors in the episode; eligible times are rounded
-outward to {_esc(bucket_s)}-second UTC periods and exact counts, rates,
-statistics, temporal shape, and stable episode identifiers are omitted.{span}</p>
+{_esc(min_actors)} distinct actors performing that action during the period,
+and — for a rate <em>excess</em> — unless no single actor emitted as many
+events as the departure itself. Eligible times are rounded outward to
+{_esc(bucket_s)}-second UTC periods and exact counts, rates, statistics,
+temporal shape, and stable episode identifiers are omitted.{span}</p>
 <p class="sub warn"><strong>Observation is not causation, and magnitude is not
 a verdict.</strong> Bands are provisional effect-size cuts. The actor floor is
 also provisional disclosure resistance, not a statistical threshold and not a
-claim that the remaining rows are anonymous.</p>"""
+claim that the remaining rows are anonymous.</p>
+<p class="sub note">Read the actor count precisely: it is how many accounts
+were <em>acting in that period</em>, not how many produced the departure. The
+second gate exists because the first cannot tell those apart — an interval
+busy with unrelated traffic clears an actor floor no matter who caused the
+excess. Neither gate attributes a departure to anybody, and the hour rounding
+is defence in depth rather than the control that bounds reconstruction: the
+primitive cards above publish the same metric per window.</p>"""
 
     if not proj.available:
         return f"""{head}

@@ -348,3 +348,76 @@ unusual graph behaviour. Meteorologist, not judge.
 Needs a forcing case and acceptance criteria like everything else here. The
 honest first increment is not a detector — it is measuring the **base rate**
 of reply/quote bursts, so "storm" has a denominator before it has a name.
+
+---
+
+## C7 — Should actor support measure the departure, or the room it happened in?
+
+**Status:** candidate, raised 2026-08-24 during disclosure-boundary
+qualification. A **narrower gate is already deployed**; the underlying design
+question is not decided.
+
+### What was found
+
+The public projection's actor-support floor (`PUBLIC_MIN_ACTORS = 10`) counts
+distinct actors performing the episode's collection and operation *anywhere in
+the observed stream* during the interval. That is **ambient** cardinality. It
+reads as "at least ten accounts were involved in this episode" and means "at
+least ten accounts did this action somewhere during that stretch of time."
+
+On a live network the two come apart badly. `block.create` runs around 5/s, so
+every interval contains hundreds of unrelated actors and the floor is
+satisfied regardless of who produced the excess. Demonstrated: an episode
+whose entire departure came from one account, plus twelve unrelated accounts
+blocking once each, published as `actor_support: "10+"`.
+
+### What was done about it, and what was not
+
+Shipped: a second gate that suppresses an **excess** episode when the busiest
+single actor in the interval emitted at least as many events as the episode's
+own excess over baseline. It needs no invented constant — the detector already
+records the event count and the baseline rate — and it fails closed when
+either is missing. Deficit episodes are exempt.
+
+That gate is a **bound on sufficiency**: one actor *could* have produced the
+departure. It is not attribution, and nothing here attributes an aggregate
+excess to any account.
+
+### The question left open
+
+Should the gate instead measure the departure's own actor cardinality — how
+many distinct accounts contributed the excess, rather than how many were
+present while it happened?
+
+Arguments for: it is the quantity a reader already believes `actor_support`
+reports, and it would generalise past the single-dominant-actor case to, say,
+three accounts jointly producing a burst inside heavy ambient traffic.
+
+Arguments against, and why this is filed rather than built:
+
+* It requires attributing excess events to actors. The aggregate lane has no
+  actor data at all; the edge lane has actors but no notion of which of its
+  rows were "the excess". Any attribution rule is new detection machinery, and
+  a wrong one is worse than the honest bound: it would produce a number that
+  looks like participation and is really an artefact of the attribution rule.
+* Attribution is exactly the shape `BOUNDARIES.md` refuses. "These accounts
+  caused this burst" is a dossier sentence even when the accounts are counted
+  rather than named.
+* The current gate's failure mode is over-suppression, which is the safe
+  direction.
+
+This needs a forcing case, an acceptance criterion for what counts as
+contributing to a departure, and a decision about whether the aggregate tier
+may consult actor structure for anything beyond a scalar gate. None of those
+exist yet. Do not implement it on the strength of the objection alone.
+
+### Related, and deliberately separate
+
+Hour-coarsening (`PUBLIC_TIME_BUCKET_S`) turned out not to be load-bearing:
+the same page publishes the underlying metric at 60-second resolution via the
+primitive sparklines and the per-window health strip, so the peak minute is
+recoverable without leaving the site. That is documented rather than
+"fixed" — deleting the primitive series to protect a coarsening claim would
+trade the instrument's receipts for a property it never actually had.
+`social.json` now says `time_coarsening_is_load_bearing: false` so a machine
+reader is not misled either.

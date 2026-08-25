@@ -8,7 +8,7 @@ sentence is the whole reason this file exists.
 `weatherwatch` counts aggregate ATProto event rates and keeps no people in its
 weather lane. Its public artifacts contain no account identifiers, graph, or
 post text. That direct-identifier guarantee is structural, not promised —
-`classify()` emits values from a finite ~90-entry metric alphabet, so a DID
+`classify()` emits values from a finite 63-entry metric alphabet, so a DID
 cannot appear in its output, and `tests/test_classify_privacy.py` checks the
 containment on every fixture. It is not an anonymity claim; the separate
 disclosure controls below address joins against public activity.
@@ -95,21 +95,74 @@ The public projection therefore applies all of these rules, in order:
 2. The already-local edge store must independently witness at least **10
    distinct actor DIDs** for the same collection, operation, and exact episode
    interval. Event count is not a substitute: one account can emit many events.
-3. Missing edge data, expired retention, an unsupported metric, malformed
-   envelope data, or fewer than 10 observed actors suppresses the episode.
-4. Eligible timestamps are rounded outward to one-hour UTC boundaries.
-5. Exact counts, rates, z-scores, temporal shape, window counts, evidence and
+3. For an **excess** episode, no single actor may have emitted as many events
+   of that collection and operation during the interval as the episode's own
+   excess over baseline. See *What rule 2 does not do* below.
+4. Missing edge data, expired retention, an unsupported metric, malformed
+   envelope data, an uncomputable excess, or fewer than 10 observed actors
+   suppresses the episode.
+5. Eligible timestamps are rounded outward to one-hour UTC boundaries.
+6. Exact counts, rates, z-scores, temporal shape, window counts, evidence and
    receipt hashes, configuration hashes, and stable episode/detection IDs are
    omitted.
-6. Repeated episodes that reduce to the same coarse type/direction/band/hour
+7. Repeated episodes that reduce to the same coarse type/direction/band/hour
    signature collapse to one public row. Suppressed and collapsed counts are
    not published, because enumerating them would partly undo suppression.
 
-The 10-actor floor and one-hour interval are **provisional disclosure controls**,
-not statistically derived privacy parameters. They rule out the adversarial
-one-account, two-account, and tiny-cohort cases and make timing joins harder;
-they do not establish anonymity. Tests in `tests/social/test_surface.py` carry
-the adversarial corpus and require every missing-evidence path to fail closed.
+These are **provisional disclosure controls**, not statistically derived
+privacy parameters, and they do not establish anonymity. Tests in
+`tests/social/test_surface.py` carry the adversarial corpus and require every
+missing-evidence path to fail closed.
+
+### What rule 2 does not do
+
+Rule 2 counts distinct actors performing that collection and operation
+*anywhere in the observed stream* during the interval. That is **ambient**
+cardinality, not the cardinality of the departure, and on a live network the
+two come apart badly: `block.create` runs around 5/s, so any interval holds
+hundreds of unrelated actors and the floor is satisfied no matter who produced
+the excess.
+
+This is demonstrated, not hypothesised. The test named
+`..._one_actor_excess_is_not_excluded_by_ambient_cardinality_alone` builds an
+episode whose entire excess comes from one account, adds twelve unrelated
+accounts blocking once each, and shows it publishing as `actor_support: "10+"`
+with rule 3 disabled. It stays in the suite with the gate stubbed out, so the
+limitation cannot quietly be forgotten.
+
+Rule 3 is the smallest thing that closes exactly that case, and it needed no
+invented constant: the detector already records the episode's event count and
+baseline rate, so the excess over baseline is arithmetic. If the busiest single
+actor in the interval clears that bar alone, the episode is one account's
+activity wearing an aggregate's clothes, and publishing it narrows an
+observer's search to an hour they would otherwise have to find themselves.
+Deficit episodes are exempt: a lull is an absence, and no account can account
+for events that did not happen.
+
+Rule 3 is a **bound on sufficiency, not a claim of attribution.** It shows that
+one actor *could* have produced the departure; it does not say one did, and
+nothing in this system attributes an aggregate excess to any account. Whether
+the gate should instead measure the departure's own cardinality — which would
+require attributing excess to actors, i.e. new detection machinery — is filed
+as C7 and deliberately not decided here.
+
+### What rule 5 does not do
+
+Hour-coarsening is **defence in depth, not the load-bearing control**, and the
+reason is on the same page: `block.create` is a primitive card with a
+sparkline drawing one mark per 60-second window, and the observation-health
+strip carries a per-window ISO timestamp. An observer who reads a coarse
+episode row can recover the minute the underlying rate peaked without leaving
+the site. `test_hour_coarsening_is_not_what_hides_the_timing` asserts exactly
+this, and `social.json` publishes
+`disclosure_policy.time_coarsening_is_load_bearing: false` so a machine reader
+is not misled either.
+
+Deleting the primitive series to repair the claim would be the wrong trade —
+the primitives are the receipts the whole instrument rests on. The controls
+that bound reconstruction are rules 2 and 3. Rule 5 removes a precise
+timestamp from the episode row; it does not remove the timing from the
+network.
 
 ## Vocabulary discipline
 
