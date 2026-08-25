@@ -486,8 +486,21 @@ def test_the_whole_tree_is_free_of_post_311_fstring_syntax():
     assert result.returncode == 0, result.stderr
 
 
+BAD_BACKSLASH = 'x = 1\ny = f"a{\' q=\\"v\\"\' if x else \'\'}b"\n'
+BAD_REUSED = 'd = {}\ny = f"{d["k"]}"\n'
+GOOD_NESTED = 'd = {"k": 1}\ny = f"""<p>{d["k"]}</p>"""\n'
+
+
 def test_the_guard_actually_catches_the_bug_it_was_written_for(tmp_path):
-    """A guard that passes everything is not a guard."""
+    """A guard that passes everything is not a guard.
+
+    On 3.11 and earlier there is no `FSTRING_START` token and the guard is a
+    no-op by construction -- because there the *interpreter* is the guard, and
+    `compileall` has already rejected the file. So the assertion flips with
+    the tokenizer: the checker catches these on 3.12+, and `compile()` refuses
+    them everywhere else. Either way nothing gets through; only the thing
+    doing the refusing changes.
+    """
     import sys as _sys
     sys_path = pathlib.Path(hero.__file__).resolve().parents[4] / "spike"
     _sys.path.insert(0, str(sys_path))
@@ -496,15 +509,19 @@ def test_the_guard_actually_catches_the_bug_it_was_written_for(tmp_path):
     finally:
         _sys.path.remove(str(sys_path))
 
-    backslash = tmp_path / "backslash.py"
-    backslash.write_text('x = 1\ny = f"a{\' q=\\"v\\"\' if x else \'\'}b"\n')
-    assert guard.offences(backslash), "escaped quote in an expression missed"
+    modern = hasattr(__import__("token"), "FSTRING_START")
+    for name, source in (("backslash", BAD_BACKSLASH), ("reused", BAD_REUSED)):
+        path = tmp_path / f"{name}.py"
+        path.write_text(source)
+        if modern:
+            assert guard.offences(path), f"{name}: 3.12 tokenizer missed it"
+        else:
+            with pytest.raises(SyntaxError):
+                compile(source, str(path), "exec")
 
-    reused = tmp_path / "reused.py"
-    reused.write_text('d = {}\ny = f"{d["k"]}"\n')
-    assert guard.offences(reused), "reused delimiter missed"
-
-    # and the legal forms this codebase relies on must stay quiet
+    # The legal form this codebase relies on everywhere must stay quiet, and
+    # must actually compile, on every version.
     fine = tmp_path / "fine.py"
-    fine.write_text('d = {"k": 1}\ny = f"""<p>{d["k"]}</p>"""\n')
+    fine.write_text(GOOD_NESTED)
+    compile(GOOD_NESTED, str(fine), "exec")
     assert guard.offences(fine) == [], "triple-quoted f-string flagged"
