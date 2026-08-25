@@ -28,7 +28,7 @@ import shutil
 import sqlite3
 from pathlib import Path
 
-from . import COLLECTOR_VERSION, db, derive, health, query, timeutil
+from . import COLLECTOR_VERSION, archive, db, derive, health, query, timeutil
 from .query import Series, WindowPoint
 from .social import section as _social_section
 from .social import api as _social_api
@@ -1284,6 +1284,9 @@ def _summary_json(runs, latest, series_map, totals_series, health_points,
     freshness = freshness or _freshness(
         health_points, generated_at, latest.bucket_width)
     return {
+        # `summary.json` carried no schema at all until v2, which left a
+        # consumer no way to notice that `windows` had become bounded.
+        "schema": archive.SCHEMA_SUMMARY,
         "interval": {
             "first_bucket_start": first,
             "last_bucket_end": last,
@@ -1326,12 +1329,11 @@ def _summary_json(runs, latest, series_map, totals_series, health_points,
                 "replayed_from_cursor": r.replayed,
             } for r in runs
         ],
-        "windows": [
-            {"bucket_start": p.bucket_start, "quality": p.quality,
-             "flags": sorted(p.flags), "events_seen": p.events_seen,
-             "observed_duration_us": p.observed_duration_us}
-            for p in health_points
-        ],
+        # Bounded. The full set is split by `archive.partition` before this
+        # document is written; see `generate_report`. Same fields, same
+        # precision, fewer of them.
+        "windows": [],
+        "history": {},
         "metrics": {
             m: {
                 "total": s.total,
@@ -1508,11 +1510,28 @@ def generate_report(
                             health_points, generated_at, freshness,
                             conditions)
 
+    # Split the published windows before anything is written. Every window
+    # lands on exactly one side, and the archive is written first: a summary
+    # that points at day files which do not exist would be worse than the
+    # unbounded artifact it replaces.
+    all_windows = [
+        {"bucket_start": p.bucket_start, "quality": p.quality,
+         "flags": sorted(p.flags), "events_seen": p.events_seen,
+         "observed_duration_us": p.observed_duration_us}
+        for p in health_points
+    ]
+    recent, days = archive.partition(all_windows)
+    summary["windows"] = recent
+
     tmp = out_dir.parent / f".{out_dir.name}.tmp-{os.getpid()}"
     if tmp.exists():
         shutil.rmtree(tmp)
     tmp.mkdir(parents=True)
     (tmp / "index.html").write_text(html_doc, encoding="utf-8")
+    index = archive.write_archive(tmp, days, generated_at=generated_at,
+                                  source_endpoint=latest.endpoint)
+    archive.write_index(tmp, index)
+    summary["history"] = archive.history_block(index, recent)
     (tmp / "summary.json").write_text(json.dumps(summary, indent=2,
                                                  default=str), encoding="utf-8")
     # Static read side, beside the one that already exists. `build()` asserts
@@ -1549,4 +1568,8 @@ def generate_report(
         "social_sink_enabled": bool(
             (social.sink_receipt or {}).get("enabled")),
         "conditions_state": (conditions or {}).get("state"),
+        "summary_windows": len(recent),
+        "archived_windows": index["window_count"],
+        "archive_days": index["day_count"],
+        "archive_problems": len(index["problems"]),
     }
