@@ -58,9 +58,39 @@ rendered beside the conditions.
 
 ## 3. The state model
 
-Six states — `Calm`, `Active`, `Turbulent`, `Storm`, `Severe storm`,
-`Conditions unavailable` — assigned by published criteria over named inputs,
-evaluated in order, first match wins.
+Eight states, each rendered as **icon + label + one sentence** (never an icon
+alone — an emoji by itself is a mood, not a reading), assigned by published
+criteria over named inputs, evaluated in order, first match wins:
+
+| | | |
+|---|---|---|
+| ☀️ | Calm | within the normal range for this time of day |
+| ⛅ | Active | above typical, not unusually so |
+| 🌬️ | Unsettled | short bursts or shifts, not sustained |
+| 🌧️ | Turbulent | elevated activity is persisting |
+| ⛈️ | Storm | a significant interaction event is in progress |
+| 🌪️ | Severe storm | substantially outside the normal range |
+| 🌫️ | Conditions unavailable | cannot support a trustworthy reading |
+| 📡 | Station offline | no current measurement at all |
+
+Standard weather grammar, because people already read it: sun = normal,
+cloud = unsettled, rain = degraded, thunder = severe, fog = cannot see.
+Deliberately coarse — no mechanism-specific icons (no "block tornado", no
+"quote storm") while the climatology is still thin. No fire emoji: *everything
+is on fire* is funny until the instrument sounds like a meme account.
+
+**Two null states, not one.** `Conditions unavailable` means the instrument
+ran and cannot interpret what it got. `Station offline` means it produced no
+reading at all, or its newest complete reading is more than 15 windows old.
+Collapsing them would hide the difference between a quiet network and a
+stopped collector — identical readings, opposite meanings — so staleness is
+measured against wall clock and reported as a fact about the instrument.
+
+**A standing refusal rides on every state**, including Calm and both null
+states: *not observed — user intent, emotional state, correctness,
+coordination, culpability, or geographic origin.* The temptation to over-read
+is strongest when the reading is dramatic, but a reader shown `Calm` will just
+as happily conclude "so the network is healthy", which is equally unmeasured.
 
 **A state label is a composite, and this estate has refused composite severity
 indices.** The published weather page says the Global Beef Index is a joke
@@ -77,7 +107,9 @@ disagree, the table is the bug.**
 Two properties matter more than the thresholds:
 
 - **Persistence separates a gust from a storm.** A single elevated window is
-  `Active`; `Storm` requires the reading to hold.
+  `Unsettled`; `Turbulent` and above require the reading to hold across
+  windows. That distinction is the whole reason `Unsettled` exists as a state
+  rather than being folded into `Active`.
 - **`Conditions unavailable` never degrades to `Calm`.** "We cannot tell" and
   "nothing is happening" are different facts and only one of them is
   reassuring. Missing data, an unobserved window, or a baseline too thin to
@@ -143,7 +175,8 @@ requires a deliberate flag and a deliberate path.
 
 1. Approximating any structural absence, including with a proxy or a sketch.
 2. Publishing the calibration chart page.
-3. A state whose name refers to a person, a group, or a motive.
+3. A state whose name refers to a person, a group, or a motive; or a
+   mechanism-specific icon.
 4. Any detector built before its quantity's climatology is `supported`.
 5. Any map with a geographic reading, however abstract the projection.
 6. Removing the paired *not observed* column from a shown measurement.

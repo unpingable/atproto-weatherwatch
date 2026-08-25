@@ -74,6 +74,11 @@ border:1px solid currentColor;white-space:nowrap}
 align-items:center}
 @media (max-width:720px){.hero{grid-template-columns:1fr}}
 .state{font-size:34px;font-weight:600;letter-spacing:.01em;margin:0 0 4px}
+.state .ico{font-size:30px;margin-right:10px;
+font-family:"Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",sans-serif}
+.state-sentence{font-size:15px;margin:0 0 8px;color:var(--ink)}
+.nobs{font-size:12.5px;color:var(--muted);margin:10px 0 0;
+border-left:3px solid var(--muted);padding-left:11px}
 .state-plain{font-size:15px;line-height:1.55;margin:0 0 10px}
 .st-calm{color:var(--q2)}.st-active{color:var(--cool)}
 .st-turbulent{color:var(--q3)}.st-storm{color:var(--mark)}
@@ -523,14 +528,22 @@ def _radar(obs: list, clim: dict, size=360) -> str:
 def _panel_hero(cond: dict, obs: list, clim: dict) -> str:
     state = cond.get("state", "unavailable")
     cant = "".join(f"<li>{_esc(c)}</li>" for c in cond.get("cannot_see", []))
+    # `conditions.criteria_table()` is the only builder; the row shape is
+    # (icon, label, text) everywhere, so this renderer has one case.
     crit = "".join(
-        f'<tr><td>{_esc(label)}</td><td>{_esc(text)}</td></tr>'
-        for label, text in cond.get("criteria_table", [])
+        f'<tr><td style="white-space:nowrap"><span class="ico" '
+        f'role="img" aria-hidden="true">{_esc(icon)}</span> '
+        f'{_esc(label)}</td><td>{_esc(text)}</td></tr>'
+        for icon, label, text in cond.get("criteria_table", [])
     )
     return f"""<div class="panel"><div class="hero">
 <div>
-<p class="state st-{_esc(state)}">{_esc(cond.get("headline", ""))}</p>
+<p class="state st-{_esc(state)}"><span class="ico" role="img"
+aria-hidden="true">{_esc(cond.get("icon", ""))}</span>{_esc(cond.get("headline", ""))}</p>
+<p class="state-sentence">{_esc(cond.get("sentence", ""))}</p>
 <p class="state-plain">{_esc(cond.get("plain", ""))}</p>
+<p class="nobs"><strong>Not observed:</strong>
+{_esc(cond.get("universal_not_observed", ""))}.</p>
 <p class="conf">{_esc(cond.get("confidence_plain", ""))}</p>
 <p class="conf">Conditions as of {_esc(cond.get("as_of", "—"))}.</p>
 </div>

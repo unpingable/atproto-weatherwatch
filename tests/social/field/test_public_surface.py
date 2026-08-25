@@ -39,8 +39,9 @@ def _build(conn, days=30, **kw):
     docs = [o.as_dict() for o in obs]
     cdoc = clim.as_dict()
     cond = cond_mod.assess(docs, cdoc).as_dict()
-    cond["criteria_table"] = [(cond_mod.STATE_LABEL[s], t)
-                              for s, t in cond_mod.CRITERIA]
+    # The production builder, not a re-implementation of it: a test that
+    # renders a shape the CLI never produces qualifies the wrong page.
+    cond["criteria_table"] = cond_mod.criteria_table()
     return points, clim, cdoc, docs, cond, cands
 
 

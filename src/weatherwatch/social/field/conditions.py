@@ -40,22 +40,73 @@ from .climatology import SUPPORTED, THIN, UNSUPPORTED
 
 CALM = "calm"
 ACTIVE = "active"
+UNSETTLED = "unsettled"
 TURBULENT = "turbulent"
 STORM = "storm"
 SEVERE = "severe_storm"
 UNAVAILABLE = "unavailable"
+OFFLINE = "station_offline"
 
 #: Display names. No state names a person, a group, or a motive.
 STATE_LABEL = {
     CALM: "Calm",
     ACTIVE: "Active",
+    UNSETTLED: "Unsettled",
     TURBULENT: "Turbulent",
     STORM: "Storm",
     SEVERE: "Severe storm",
     UNAVAILABLE: "Conditions unavailable",
+    OFFLINE: "Station offline",
 }
 
-STATE_ORDER = (UNAVAILABLE, CALM, ACTIVE, TURBULENT, STORM, SEVERE)
+#: Standard weather grammar, because people already know how to read it:
+#: sun = normal, cloud = unsettled, rain = degraded, thunder = severe,
+#: fog = cannot see. Deliberately coarse -- no mechanism-specific icons (no
+#: "block tornado", no "quote storm") while the climatology is still thin.
+#: No fire emoji: "everything is on fire" is funny until the instrument
+#: sounds like a meme account.
+STATE_ICON = {
+    CALM: "\u2600\ufe0f",
+    ACTIVE: "\u26c5",
+    UNSETTLED: "\U0001f32c\ufe0f",
+    TURBULENT: "\U0001f327\ufe0f",
+    STORM: "\u26c8\ufe0f",
+    SEVERE: "\U0001f32a\ufe0f",
+    UNAVAILABLE: "\U0001f32b\ufe0f",
+    OFFLINE: "\U0001f4e1",
+}
+
+#: One sentence a stranger can read cold. Shown with the icon, never instead
+#: of it -- an emoji alone is a mood, not a reading.
+STATE_SENTENCE = {
+    CALM: "Conditions are within the normal range for this time of day.",
+    ACTIVE: "Activity is above typical, but not unusually so.",
+    UNSETTLED: "Short bursts or shifts are visible, without settling into a "
+               "sustained pattern.",
+    TURBULENT: "Elevated activity is persisting.",
+    STORM: "A significant interaction event is in progress.",
+    SEVERE: "Conditions are substantially outside the normal range.",
+    UNAVAILABLE: "The instrument cannot support a trustworthy reading right "
+                 "now.",
+    OFFLINE: "No current measurement is available from the instrument.",
+}
+
+#: Rendered with EVERY state, including Calm and the two null states. The
+#: temptation to over-read is strongest when the reading is dramatic, but a
+#: reader shown "Calm" will just as happily conclude "so the network is
+#: healthy", which is equally unmeasured.
+UNIVERSAL_NOT_OBSERVED = (
+    "user intent, emotional state, correctness, coordination, culpability, "
+    "or geographic origin"
+)
+
+STATE_ORDER = (OFFLINE, UNAVAILABLE, CALM, ACTIVE, UNSETTLED, TURBULENT,
+               STORM, SEVERE)
+
+#: A reading older than this many windows means the station stopped, not that
+#: the weather went quiet. Distinguishing the two is the whole reason
+#: `station_offline` exists as its own state.
+STALE_AFTER_WINDOWS = 15
 
 #: Multiple of the hour-typical level at which a storm is called severe.
 SEVERE_RATIO = 3.0
@@ -67,21 +118,39 @@ SEVERE_PERSISTENCE = 3
 #: Rendered on the page verbatim -- if this table and the code disagree, the
 #: table is the bug.
 CRITERIA = (
+    (OFFLINE, "The instrument produced no reading, or its most recent "
+              f"complete reading is more than {STALE_AFTER_WINDOWS} windows "
+              "old."),
+    (UNAVAILABLE, "The window was not observed, or the baseline for this hour "
+                  "is too thin to compare against."),
     (SEVERE, "Interaction activity is above the 95th percentile for this hour "
              f"of day, at least {SEVERE_RATIO:g}x its typical level, and has "
              f"stayed elevated for {SEVERE_PERSISTENCE} or more windows."),
     (STORM, "Interaction activity is above the 95th percentile for this hour "
             f"of day and has stayed elevated for {STORM_PERSISTENCE} or more "
             "windows."),
-    (TURBULENT, "Variability of interaction activity is above the 95th "
-                "percentile for this hour of day."),
+    (TURBULENT, "Activity or its variability is elevated for this hour of day "
+                f"and has persisted across {STORM_PERSISTENCE} or more "
+                "windows."),
+    (UNSETTLED, "Activity or its variability is elevated for this hour of "
+                "day, but has not persisted."),
     (ACTIVE, "Interaction activity is above the 75th percentile for this hour "
              "of day."),
     (CALM, "Every measured quantity is within its usual range for this hour "
            "of day."),
-    (UNAVAILABLE, "The window was not observed, or the baseline for this hour "
-                  "is too thin to compare against."),
 )
+
+def criteria_table() -> list[tuple[str, str, str]]:
+    """`CRITERIA` as (icon, label, text), in evaluation order.
+
+    One builder, so the page a visitor sees and the page the tests inspect
+    cannot drift into different shapes. The criteria are published because
+    the state word is a composite over named inputs, and a composite whose
+    rule is unpublished is a verdict.
+    """
+    return [(STATE_ICON[state], STATE_LABEL[state], text)
+            for state, text in CRITERIA]
+
 
 #: Things a reader may expect to be here and which the instrument cannot see.
 #: Rendered beside the conditions so the gap is part of the reading.
@@ -163,6 +232,8 @@ class Reason:
 class Conditions:
     state: str
     label: str
+    icon: str
+    sentence: str
     headline: str
     plain: str
     criteria: str
@@ -180,7 +251,10 @@ class Conditions:
         return {
             "state": self.state,
             "label": self.label,
+            "icon": self.icon,
+            "sentence": self.sentence,
             "headline": self.headline,
+            "universal_not_observed": UNIVERSAL_NOT_OBSERVED,
             "plain": self.plain,
             "criteria": self.criteria,
             "reasons": [
@@ -247,10 +321,24 @@ def _fmt_ratio(x: float) -> str:
     return f"{x:.1f}x" if x < 10 else f"{x:.0f}x"
 
 
-def assess(observations: list, clim: dict) -> Conditions:
-    """Current conditions from stored observations and their climatology."""
+def _window_seconds(doc: dict) -> int:
+    raw = str(doc.get("window", "60s")).rstrip("s")
+    try:
+        return max(int(float(raw)), 1)
+    except ValueError:
+        return 60
+
+
+def assess(observations: list, clim: dict, now: str | None = None) -> Conditions:
+    """Current conditions from stored observations and their climatology.
+
+    `now` enables staleness detection. Without it the instrument can say what
+    it last measured but not whether it is still measuring, and those are
+    different questions: a station that stopped an hour ago and a network that
+    went quiet an hour ago produce identical readings and mean opposite things.
+    """
     if not observations or not clim:
-        return _unavailable("No observations have been filed yet.")
+        return _offline("The instrument has filed no observations.")
 
     # The most recent *complete* window, not literally the last one. The
     # window in flight is partial by definition, so keying on it would make
@@ -264,6 +352,21 @@ def assess(observations: list, clim: dict) -> Conditions:
             "No window in range was observed cleanly enough to compare "
             "against its baseline.")
     stale_windows = len(observations) - 1 - observations.index(latest)
+
+    # Staleness is measured against wall clock, not against position in the
+    # list: an archive that simply stops has no later rows to count.
+    if now:
+        from ... import timeutil
+        end = timeutil.to_epoch(latest.get("ts_end", ""))
+        ref = timeutil.to_epoch(now)
+        if end is not None and ref is not None:
+            width = _window_seconds(latest)
+            behind = (ref - end) / width
+            if behind > STALE_AFTER_WINDOWS:
+                return _offline(
+                    f"The most recent complete reading is {behind:.0f} windows "
+                    f"old. That is a fact about the instrument, not about the "
+                    f"network.")
     conf = latest.get("confidence", {})
     hour = _hour_of(latest.get("ts_start", ""))
     iv = latest.get("metrics", {}).get("interaction_velocity")
@@ -296,12 +399,19 @@ def assess(observations: list, clim: dict) -> Conditions:
     above_p95 = iv > p95
     above_p75 = iv > p75
 
+    # Evaluated in CRITERIA order, first match wins. Persistence is what
+    # separates Turbulent from Unsettled: the same reading that has held for
+    # several windows is weather, and one that has not is a gust.
+    sustained = runs >= STORM_PERSISTENCE
+    elevated = above_p75 or turb_high
     if above_p95 and ratio and ratio >= SEVERE_RATIO and runs >= SEVERE_PERSISTENCE:
         state = SEVERE
-    elif above_p95 and runs >= STORM_PERSISTENCE:
+    elif above_p95 and sustained:
         state = STORM
-    elif turb_high:
+    elif elevated and sustained:
         state = TURBULENT
+    elif turb_high or above_p95:
+        state = UNSETTLED
     elif above_p75:
         state = ACTIVE
     else:
@@ -314,7 +424,9 @@ def assess(observations: list, clim: dict) -> Conditions:
     return Conditions(
         state=state,
         label=STATE_LABEL[state],
-        headline=_headline(state, ratio, turb_high),
+        icon=STATE_ICON[state],
+        sentence=STATE_SENTENCE[state],
+        headline=STATE_LABEL[state],
         plain=_plain(state, ratio, runs),
         criteria=criteria,
         reasons=tuple(reasons),
@@ -326,10 +438,27 @@ def assess(observations: list, clim: dict) -> Conditions:
     )
 
 
+def _offline(why: str) -> Conditions:
+    """No measurement at all. Distinct from "cannot support a reading"."""
+    return Conditions(
+        state=OFFLINE, label=STATE_LABEL[OFFLINE],
+        icon=STATE_ICON[OFFLINE], sentence=STATE_SENTENCE[OFFLINE],
+        headline=STATE_LABEL[OFFLINE],
+        plain=f"{STATE_SENTENCE[OFFLINE]} {why}",
+        criteria=next(c for st, c in CRITERIA if st == OFFLINE),
+        reasons=(), confidence=UNSUPPORTED,
+        confidence_plain=(
+            "This says nothing about network conditions. It says the "
+            "instrument is not reporting."),
+        persistence_windows=0,
+    )
+
+
 def _unavailable(why: str) -> Conditions:
     return Conditions(
         state=UNAVAILABLE, label=STATE_LABEL[UNAVAILABLE],
-        headline="Conditions unavailable",
+        icon=STATE_ICON[UNAVAILABLE], sentence=STATE_SENTENCE[UNAVAILABLE],
+        headline=STATE_LABEL[UNAVAILABLE],
         plain=why,
         criteria=next(c for s, c in CRITERIA if s == UNAVAILABLE),
         reasons=(),
@@ -339,18 +468,6 @@ def _unavailable(why: str) -> Conditions:
             "say, which is a different thing."),
         persistence_windows=0,
     )
-
-
-def _headline(state: str, ratio: float | None, turb_high: bool) -> str:
-    if state == SEVERE:
-        return "Severe interaction storm"
-    if state == STORM:
-        return "Interaction storm"
-    if state == TURBULENT:
-        return "Sustained turbulence"
-    if state == ACTIVE:
-        return "Elevated interaction activity"
-    return "Calm conditions"
 
 
 def _plain(state: str, ratio: float | None, runs: int) -> str:

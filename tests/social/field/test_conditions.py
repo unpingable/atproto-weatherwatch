@@ -58,10 +58,14 @@ def test_thin_history_yields_unavailable_not_calm(field_conn):
     assert "long enough" in c.plain or "baseline" in c.plain
 
 
-def test_no_observations_is_unavailable():
+def test_no_observations_is_station_offline_not_unavailable():
+    """Distinct facts: the instrument filed nothing, versus it filed something
+    it cannot interpret. Only the second is about the network at all."""
     c = cond_mod.assess([], {})
-    assert c.state == cond_mod.UNAVAILABLE
+    assert c.state == cond_mod.OFFLINE
+    assert c.state != cond_mod.UNAVAILABLE
     assert c.reasons == ()
+    assert "not reporting" in c.confidence_plain
 
 
 def test_supported_history_produces_a_real_state(field_conn):
@@ -143,8 +147,7 @@ def test_conditions_dict_has_no_actor_shaped_field(field_conn):
 def storm_parts(field_conn):
     c, docs, clim = _assess(field_conn, days=30)
     cond = c.as_dict()
-    cond["criteria_table"] = [
-        (cond_mod.STATE_LABEL[s], t) for s, t in cond_mod.CRITERIA]
+    cond["criteria_table"] = cond_mod.criteria_table()
     return docs, clim, cond
 
 
@@ -152,8 +155,7 @@ def storm_parts(field_conn):
 def page(field_conn):
     c, docs, clim = _assess(field_conn, days=30)
     cond = c.as_dict()
-    cond["criteria_table"] = [
-        (cond_mod.STATE_LABEL[s], t) for s, t in cond_mod.CRITERIA]
+    cond["criteria_table"] = cond_mod.criteria_table()
     return viz.render_public(docs, clim, {"generated_at": "t"}, cond), c
 
 
@@ -265,3 +267,88 @@ def test_negative_candidate_excess_is_explained_not_left_to_read_as_calm():
 
 class _EmptyClim:
     quantities: dict = {}
+
+
+# --- the eight-state vocabulary --------------------------------------------
+
+def test_every_state_has_icon_label_and_sentence():
+    for state in cond_mod.STATE_LABEL:
+        assert cond_mod.STATE_ICON.get(state), f"{state} has no icon"
+        assert cond_mod.STATE_SENTENCE.get(state, "").endswith("."), state
+        assert state in dict(cond_mod.CRITERIA), f"{state} has no criteria"
+    assert len(set(cond_mod.STATE_ICON.values())) == len(cond_mod.STATE_ICON)
+
+
+def test_icons_use_standard_weather_grammar_and_no_fire():
+    """People already know sun/cloud/rain/thunder/fog. Fire is a meme."""
+    icons = "".join(cond_mod.STATE_ICON.values())
+    for banned in ("\U0001f525", "\U0001f4a9", "\U0001f480", "☠"):
+        assert banned not in icons
+    assert cond_mod.STATE_ICON[cond_mod.CALM] == "☀️"
+    assert cond_mod.STATE_ICON[cond_mod.UNAVAILABLE] != \
+        cond_mod.STATE_ICON[cond_mod.CALM], "fog must not read as sun"
+    assert cond_mod.STATE_ICON[cond_mod.OFFLINE] != \
+        cond_mod.STATE_ICON[cond_mod.UNAVAILABLE]
+
+
+def test_no_mechanism_specific_icons_or_labels():
+    blob = " ".join(cond_mod.STATE_LABEL.values()).lower()
+    for banned in ("block", "quote", "reply", "beef", "tornado of"):
+        assert banned not in blob
+
+
+def test_a_brief_excursion_is_unsettled_not_turbulent(field_conn):
+    """Persistence is the whole difference: a gust is not weather."""
+    total = 30 * 24
+    c, _, _ = _assess(field_conn, days=30, spike={total - 1: 3.0})
+    assert c.persistence_windows < cond_mod.STORM_PERSISTENCE
+    assert c.state in (cond_mod.UNSETTLED, cond_mod.ACTIVE)
+    assert c.state != cond_mod.TURBULENT
+
+
+def test_a_sustained_excursion_reaches_at_least_turbulent(field_conn):
+    total = 30 * 24
+    c, _, _ = _assess(field_conn, days=30,
+                      spike={total - 1 - i: 2.2 for i in range(4)})
+    assert c.persistence_windows >= cond_mod.STORM_PERSISTENCE
+    assert c.state in (cond_mod.TURBULENT, cond_mod.STORM, cond_mod.SEVERE)
+
+
+def test_a_stale_reading_is_offline_not_calm(field_conn):
+    """A station that stopped an hour ago and a network that went quiet an
+    hour ago produce identical readings and mean opposite things."""
+    c, docs, clim = _assess(field_conn, days=30)
+    assert c.state != cond_mod.OFFLINE
+
+    fresh = cond_mod.assess(docs, clim, now=docs[-1]["ts_end"])
+    assert fresh.state != cond_mod.OFFLINE
+
+    # a day later, with no new observations
+    late = "2099-01-01T00:00:00Z"
+    stale = cond_mod.assess(docs, clim, now=late)
+    assert stale.state == cond_mod.OFFLINE
+    assert stale.state != cond_mod.CALM
+    assert "windows old" in stale.plain
+    assert "not about the network" in stale.plain
+
+
+def test_offline_says_nothing_about_the_network():
+    c = cond_mod.assess([], {})
+    assert "says nothing about network conditions" in c.confidence_plain
+
+
+def test_universal_not_observed_rides_on_every_state(field_conn):
+    c, docs, clim = _assess(field_conn, days=30)
+    for cond in (c, cond_mod.assess([], {}),
+                 cond_mod.assess(docs, clim, now="2099-01-01T00:00:00Z")):
+        d = cond.as_dict()
+        blob = d["universal_not_observed"]
+        for term in ("intent", "emotional state", "correctness",
+                     "coordination", "culpability", "geographic origin"):
+            assert term in blob, f"{term} missing from the standing refusal"
+
+
+def test_headline_is_the_published_label_not_a_second_vocabulary(field_conn):
+    c, _, _ = _assess(field_conn, days=30)
+    assert c.headline == cond_mod.STATE_LABEL[c.state]
+    assert c.sentence == cond_mod.STATE_SENTENCE[c.state]

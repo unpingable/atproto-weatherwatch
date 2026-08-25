@@ -234,13 +234,15 @@ def cmd_field(args) -> int:
         docs, total_obs = fobs.load_observations(
             econn, climatology_id=clim.climatology_id)
         cdoc = fobs.load_climatology(econn, clim.climatology_id)
-        from .field.conditions import CRITERIA, STATE_LABEL, assess
-        cond = assess(docs, cdoc).as_dict()
-        cond["criteria_table"] = [
-            (STATE_LABEL[s2], text) for s2, text in CRITERIA]
+        from .field.conditions import assess, criteria_table
+        # `now` lets the instrument distinguish "the network went quiet" from
+        # "the station stopped reporting" -- identical readings, opposite
+        # meanings.
+        cond = assess(docs, cdoc, now=now).as_dict()
+        cond["criteria_table"] = criteria_table()
         meta = {"generated_at": now, "observations_in_store": total_obs}
         out["conditions"] = {k: cond[k] for k in
-                             ("state", "headline", "confidence",
+                             ("state", "icon", "label", "confidence",
                               "persistence_windows", "as_of")}
         out["rendered_from_storage"] = len(docs)
         out["observations_in_store"] = total_obs
