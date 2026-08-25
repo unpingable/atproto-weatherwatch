@@ -27,7 +27,8 @@ Formulas
     zscore(x)             = (x - mean) / std                    [None if std == 0]
     pct_change(x)         = (x - mean) / mean                   [None if mean == 0]
 
-    condition(z)          = surging   if z >= 3
+    condition(z, pc)      = normal    if |pc| < MIN_LABEL_EFFECT
+                            surging   if z >= 3
                             elevated  if 1.5 <= z < 3
                             normal    if -1.5 < z < 1.5
                             quiet     if -3 < z <= -1.5
@@ -36,9 +37,17 @@ Formulas
 
 `condition` labels are a convenience for reading a dashboard at a glance.
 They are threshold cuts on a z-score against a short trailing baseline of the
-same stream. They are not calibrated against anything, they have no
-statistical warrant beyond "this hour looked different from the last few
-minutes", and they must not be presented as if they did.
+same stream, with an effect-size floor in front of them. They are not
+calibrated against anything, they have no statistical warrant beyond "this
+hour looked different from the last few minutes", and they must not be
+presented as if they did.
+
+The effect-size floor is there because significance and magnitude are
+different questions and only one of them is what a reader takes from a
+coloured word. A trailing baseline with almost no variance makes a 3% change
+enormously significant; the published page showed `surging` at z = 16.45 for
+exactly that reason. Both gates are uncalibrated, and the floor is a
+presentation guard, not a statistical correction.
 """
 
 from __future__ import annotations
@@ -109,9 +118,33 @@ def pct_change(x: float, m: float | None) -> float | None:
     return (x - m) / m
 
 
-def condition(z: float | None) -> str:
+#: A labelled condition must clear BOTH a significance gate and an effect-size
+#: gate. Significance alone is not enough: a trailing baseline with tiny
+#: variance makes a small change enormously "significant", and the published
+#: page showed `surging` at z = 16.45 for exactly that reason. The same
+#: separation already governs the social-weather lane, where magnitude is a
+#: ratio and z only decides whether there is an episode at all; this applies
+#: it to the labels a visitor actually reads.
+#:
+#: Deliberately narrow: the z values, the baselines and every number in the
+#: table are unchanged. Only the coloured word is gated.
+#:
+#: **Provisional and uncalibrated**, exactly like the z cuts it guards. 15%
+#: is a legibility choice — "a reader would not call this a change" — not a
+#: derived threshold, and nothing downstream may treat it as one. It is a
+#: named constant with its reasoning attached so it can be argued with;
+#: a number that cannot be found cannot be disputed.
+MIN_LABEL_EFFECT = 0.15
+
+
+def condition(z: float | None, pct_change: float | None = None,
+              min_effect: float = MIN_LABEL_EFFECT) -> str:
     if z is None:
         return COND_UNKNOWN
+    if pct_change is not None and abs(pct_change) < min_effect:
+        # Statistically unusual, materially ordinary. Reported as normal
+        # because a reader cannot un-see a red word.
+        return COND_NORMAL
     if z >= Z_SURGING:
         return COND_SURGING
     if z >= Z_ELEVATED:
@@ -176,7 +209,7 @@ def rolling_departures(
             baseline_n=len(baseline),
             z=z,
             pct_change=pc,
-            condition=condition(z),
+            condition=condition(z, pc),
             eligible=p.baseline_eligible,
             quality=p.quality,
         ))

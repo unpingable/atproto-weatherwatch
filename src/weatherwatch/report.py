@@ -54,6 +54,18 @@ from .social.config import RECEIPT_META_KEY as _SOCIAL_RECEIPT_KEY
 #: tail -- because an unboundedly growing dashboard is a defect either way.
 REPORT_MAX_WINDOWS = 200_000
 
+#: A per-window ratio is only shown as an extreme when its denominator is at
+#: least this large.
+#:
+#: Ratios are a two-body system: `block/follow` reaches 22.75 when four
+#: follows happen to land in a window, and the number is arithmetic rather
+#: than weather. The page already says so in prose, but **a disclaimer does
+#: not travel with a screenshot** — somebody caption-crops the 22.75 and the
+#: caveat stays behind. So the guard is structural: extremes are selected only
+#: from windows with a real denominator, and the windows excluded are counted
+#: on the page rather than silently dropped.
+MIN_RATIO_DENOMINATOR = 30
+
 #: The deployed publisher runs every five minutes. Freshness is considered
 #: current for two missed publication intervals plus one source bucket. This
 #: is an operational, explicitly provisional threshold, not a statement about
@@ -649,9 +661,14 @@ def _section_conditions(conn, run_ids, series_map, totals_series) -> str:
             continue
         pts = derive.ratio_series(a, b)
         valued = [p for p in pts if p.value is not None]
+        # Structural guard, not a caveat: an extreme drawn from a four-event
+        # denominator is arithmetic wearing weather's clothes.
+        eligible = [p for p in valued
+                    if (p.denominator or 0) >= MIN_RATIO_DENOMINATOR]
+        thin = len(valued) - len(eligible)
         overall = derive.ratio(a.total, b.total)
-        low = min(valued, key=lambda point: point.value) if valued else None
-        high = max(valued, key=lambda point: point.value) if valued else None
+        low = min(eligible, key=lambda point: point.value) if eligible else None
+        high = max(eligible, key=lambda point: point.value) if eligible else None
 
         def expression(numerator, denominator, value):
             if value is None:
@@ -668,7 +685,8 @@ def _section_conditions(conn, run_ids, series_map, totals_series) -> str:
             f"<td>{expression(a.total, b.total, overall)}</td>"
             f"<td>{expression(low.numerator, low.denominator, low.value) if low else '—'}</td>"
             f"<td>{expression(high.numerator, high.denominator, high.value) if high else '—'}</td>"
-            f"<td class='num'>{len(valued)}</td></tr>"
+            f"<td class='num'>{len(eligible)}</td>"
+            f"<td class='num'>{thin or ''}</td></tr>"
         )
 
     dep_rows = []
@@ -711,7 +729,8 @@ def _section_conditions(conn, run_ids, series_map, totals_series) -> str:
     <table><thead><tr><th>ratio</th><th>overall: numerator / denominator = ratio</th>
     <th>min window: numerator / denominator = ratio</th>
     <th>max window: numerator / denominator = ratio</th>
-    <th>windows</th></tr></thead><tbody>{''.join(rows)}</tbody></table>
+    <th>windows scored</th><th>windows too thin</th></tr></thead>
+    <tbody>{''.join(rows)}</tbody></table>
   </div>
   <div class="panel scroll">
     <table><thead><tr><th>metric</th><th>latest /s</th><th>baseline</th><th>z</th>
@@ -734,7 +753,17 @@ from the recent past”.</p>
 <em>a</em> rose, because <em>b</em> fell, or because both did — and it means
 little when <em>b</em> is small. The ratio is the hint; the primitive cards
 above are the receipts, and each ratio's numerator and denominator appear
-there as their own cards.</p>"""
+there as their own cards.</p>
+    <p class="note"><strong>Extremes are drawn only from windows whose
+    denominator reached {MIN_RATIO_DENOMINATOR}.</strong> A ratio is a
+    two-body system: divide by four and it will happily report 22&times;,
+    which is arithmetic rather than weather. Saying so in prose is not enough
+    — a caveat does not travel with a screenshot — so the thin windows are
+    excluded from the min and max columns and counted in the last one instead
+    of being quietly dropped. <strong>{MIN_RATIO_DENOMINATOR} is a legibility
+    floor, not a statistical one</strong>: no power calculation says a ratio
+    becomes sound at {MIN_RATIO_DENOMINATOR} events, only that a single-digit
+    denominator should not be allowed to set a headline.</p>"""
 
 
 def _section_health_strip(health_points) -> str:
@@ -927,7 +956,11 @@ def _load_social(conn, social_db, window_s: int | None = None) -> "_social_proje
             reason="no episode store configured for this report",
             source={"audience": _social_projection.AUDIENCE_PUBLIC,
                     "detector_allowlist":
-                        sorted(_social_projection.PUBLIC_DETECTORS)},
+                        sorted(_social_projection.PUBLIC_DETECTORS),
+                    # Stated even with nothing to apply it to: "no rows" and
+                    # "no policy" are different facts.
+                    "disclosure_policy":
+                        _social_projection.public_disclosure_policy()},
             sink_receipt=receipt)
     since = None
     if window_s:

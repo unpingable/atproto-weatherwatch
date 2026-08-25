@@ -135,7 +135,9 @@ def robust_departures(
         out.append(derive.Departure(
             bucket_start=p.bucket_start, value=value, baseline_mean=med,
             baseline_std=scale, baseline_n=len(baseline), z=z, pct_change=pc,
-            condition=derive.condition(z), eligible=p.baseline_eligible,
+            # Same gate as the report lane: one vocabulary, one meaning.
+            # `elevated` must not depend on which lane computed it.
+            condition=derive.condition(z, pc), eligible=p.baseline_eligible,
             quality=p.quality,
         ))
         if p.baseline_eligible and value is not None:
