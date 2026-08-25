@@ -305,6 +305,27 @@ td .pill { min-width:5.6em; text-align:center; }
 .scroll { overflow-x:auto; }
 .scroll table { min-width:32rem; }
 .scroll.wide table { min-width:46rem; }
+/* Four ratio expressions across, each `white-space:nowrap` by design so a
+   numerator never detaches from its denominator. Side by side in a two-column
+   grid these two tables starved their own label columns until
+   `overflow-wrap:anywhere` shredded the word "ratio" down one character per
+   line. They get the full width and a real local scroller instead. */
+.scroll.wider table { min-width:70rem; }
+/* The label column has to be allowed to keep its word. Its siblings are
+   `white-space:nowrap` by design, so they claim their full intrinsic width
+   first and the label is left with whatever remains — and `overflow-wrap:
+   anywhere` on the body then obligingly breaks "ratio" into six lines of one
+   letter. The labels are short; let them be nowrap too and let the local
+   scroller carry the extra width, which is what it is for. */
+.scroll.wider th:first-child, .scroll.wider td:first-child,
+.scroll.wide th:first-child, .scroll.wide td:first-child {
+  white-space:nowrap; }
+/* Same failure, other end of the table: with three nowrap ratio expressions
+   claiming 1,343px of a 1,549px table, the two count columns were left 31px
+   each and "43,056" came out as six lines of one character. Inside a table
+   that already has its own scroller, a number and a column header both stay
+   on one line and the scroller carries the width. */
+.scroll th, .scroll td.num { white-space:nowrap; }
 .ratio-expression { white-space:nowrap; }
 footer { margin-top:38px; padding-top:14px; border-top:1px solid var(--rule);
          color:var(--muted); font-size:12px; }
@@ -1039,15 +1060,15 @@ def _section_conditions(conn, run_ids, series_map, totals_series) -> str:
     )
 
     return f"""<div class="panel" style="margin-bottom:12px">{total_line}</div>
-<div class="grid g2">
-  <div class="panel scroll">
+<div class="grid">
+  <div class="panel scroll wider">
     <table><thead><tr><th>ratio</th><th>overall: numerator / denominator = ratio</th>
     <th>min window: numerator / denominator = ratio</th>
     <th>max window: numerator / denominator = ratio</th>
     <th>windows scored</th><th>windows too thin</th></tr></thead>
     <tbody>{''.join(rows)}</tbody></table>
   </div>
-  <div class="panel scroll">
+  <div class="panel scroll wide">
     <table><thead><tr><th>metric</th><th>latest /s</th><th>baseline</th><th>z</th>
     <th>Δ</th><th>condition</th><th>n</th></tr></thead>
     <tbody>{''.join(dep_rows)}</tbody></table>

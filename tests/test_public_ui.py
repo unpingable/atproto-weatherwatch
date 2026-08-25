@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import datetime
 import json
+import pathlib
 import re
 
 import pytest
@@ -453,3 +454,57 @@ def test_the_radar_scale_is_symmetric_about_typical():
 
 def test_a_missing_baseline_draws_no_radar_at_all():
     assert hero.radar([], {}) == ""
+
+
+# --- 11. the interpreter this renders on is not the one it deploys on ------
+
+def test_the_ladder_markup_parses_on_the_python_that_serves_it():
+    """The serving host is 3.10; this workstation is 3.12.
+
+    PEP 701 lifted the f-string restrictions in 3.12, so an escaped quote
+    inside an f-string expression renders perfectly here and is a SyntaxError
+    where the page is actually built. This is the second time the gap between
+    the development interpreter and the deployed one has produced a red build
+    in this repository.
+    """
+    import sys as _sys
+    sys_path = pathlib.Path(hero.__file__).resolve().parents[4] / "spike"
+    _sys.path.insert(0, str(sys_path))
+    try:
+        import check_py310_fstrings as guard
+    finally:
+        _sys.path.remove(str(sys_path))
+    assert guard.offences(pathlib.Path(hero.__file__)) == []
+
+
+def test_the_whole_tree_is_free_of_post_311_fstring_syntax():
+    import subprocess
+    root = pathlib.Path(hero.__file__).resolve().parents[4]
+    result = subprocess.run(
+        [__import__("sys").executable, "spike/check_py310_fstrings.py"],
+        cwd=root, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+
+
+def test_the_guard_actually_catches_the_bug_it_was_written_for(tmp_path):
+    """A guard that passes everything is not a guard."""
+    import sys as _sys
+    sys_path = pathlib.Path(hero.__file__).resolve().parents[4] / "spike"
+    _sys.path.insert(0, str(sys_path))
+    try:
+        import check_py310_fstrings as guard
+    finally:
+        _sys.path.remove(str(sys_path))
+
+    backslash = tmp_path / "backslash.py"
+    backslash.write_text('x = 1\ny = f"a{\' q=\\"v\\"\' if x else \'\'}b"\n')
+    assert guard.offences(backslash), "escaped quote in an expression missed"
+
+    reused = tmp_path / "reused.py"
+    reused.write_text('d = {}\ny = f"{d["k"]}"\n')
+    assert guard.offences(reused), "reused delimiter missed"
+
+    # and the legal forms this codebase relies on must stay quiet
+    fine = tmp_path / "fine.py"
+    fine.write_text('d = {"k": 1}\ny = f"""<p>{d["k"]}</p>"""\n')
+    assert guard.offences(fine) == [], "triple-quoted f-string flagged"

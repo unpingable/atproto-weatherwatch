@@ -324,8 +324,12 @@ def _ladder(state: str) -> str:
     cells = []
     for s in LADDER:
         on = " on" if s == state else ""
-        cells.append(f'<span class="{("st-" + s + on).strip()}"'
-                     f'{" aria-current=\"true\"" if s == state else ""}>'
+        # Built outside the f-string. An escaped quote inside an f-string
+        # expression is a SyntaxError before Python 3.12, and the serving host
+        # runs 3.10 -- see `spike/check_py310_fstrings.py`, which exists
+        # because this exact line went red in CI.
+        current = ' aria-current="true"' if s == state else ""
+        cells.append(f'<span class="{("st-" + s + on).strip()}"{current}>'
                      f'{_esc(cond_mod.STATE_LABEL[s])}</span>')
     note = ("The state in force, among the published states. Two further "
             "states — conditions unavailable and station offline — are not on "
