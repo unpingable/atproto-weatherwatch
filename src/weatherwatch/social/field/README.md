@@ -124,9 +124,16 @@ hour-of-day cell. Two guards keep that from becoming a finding:
 |---|---|---|
 | function | `viz.render_public` | `viz.render_station` |
 | flag | `--output` | `--station-output` |
-| size | ~11 KB | ~320 KB |
-| carries | state, why, limits, radar | meteogram, intensity map, field portrait, climatology, provenance |
+| size | ~19 KB | ~340 KB |
+| carries | state, why, limits, radar, recent history | meteogram, intensity map, field portrait, climatology, provenance |
 | published | yes (when deployed) | **no** — operator only |
+
+Since 2026-08-25 the public conditions are also the **first screen of the
+canonical report** at `weatherwatch.neutral.zone`. Both surfaces call one
+builder, `hero.render`, so the reading cannot acquire two appearances; the
+report reads sealed observations from the store rather than computing the
+field, and says `Station offline` when the store has none. See
+[`DECISIONS.md`](DECISIONS.md) §7.
 
 The CLI refuses to write the calibration surface into the public directory.
 The disposition and the trigger for revisiting it are recorded in

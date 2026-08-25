@@ -58,7 +58,9 @@ def test_generates_from_synthetic_db(report_db, tmp_path):
     stats = report.generate_report(report_db, out)
     assert (out / "index.html").exists()
     assert (out / "summary.json").exists()
-    assert stats["windows"] == 9      # 10 slots, one unobserved
+    # 10 slots in the interval, 9 of them observed. The unobserved slot is
+    # reported as a window, marked unobserved -- see the test below.
+    assert stats["windows"] == 10
     assert stats["html_bytes"] > 2000
 
 
@@ -194,14 +196,29 @@ def test_unobserved_is_structurally_distinct_from_zero(report_db, tmp_path):
     html = read_html(out)
     summary = json.loads((out / "summary.json").read_text())
 
-    # The unobserved window has no health row at all, so it must not appear
-    # as a zero-count observation.
-    assert len(summary["windows"]) == 9
-    assert all(w["quality"] != "unobserved" for w in summary["windows"])
+    # The unobserved window has no health row, and it must appear anyway --
+    # explicitly marked unobserved, with no events and no observed duration.
+    #
+    # This assertion used to run the other way: the window was omitted, on the
+    # grounds that inventing a row would fabricate a zero-count observation.
+    # But a point carrying `quality == "unobserved"`, `events_seen == null`
+    # and zero observed duration is the opposite of a fabricated zero -- it is
+    # the statement that nobody was watching, which the metric lane has always
+    # made. Omitting it let the health strip lay observed windows side by side
+    # with an outage between them and nothing on the page saying so.
+    assert len(summary["windows"]) == 10
+    unobserved = [w for w in summary["windows"] if w["quality"] == "unobserved"]
+    assert len(unobserved) == 1
+    assert unobserved[0]["events_seen"] is None
+    assert unobserved[0]["observed_duration_us"] == 0
 
     # The metric series must report it as unobserved, not as zero.
     assert summary["metrics"]["post.create"]["unobserved_windows"] == 1
     assert summary["metrics"]["post.create"]["observed_windows"] == 9
+
+    # Both lanes must now agree about how many windows were not observed.
+    assert len(unobserved) == summary["metrics"]["post.create"][
+        "unobserved_windows"]
 
     # And the rendering must distinguish it: a hatch pattern, plus prose.
     assert 'fill="url(#unobs)"' in html
@@ -343,12 +360,17 @@ def test_charts_are_responsive_and_scale_by_viewbox(report_db, tmp_path):
     html = read_html(out)
     svgs = re.findall(r"<svg[^>]*>", html)
     assert svgs
+    # The invariant is "every chart scales by viewBox and carries a class the
+    # stylesheet sizes responsively" — not "there are exactly two kinds of
+    # chart". A new chart is required to join the set, not to be exempt.
+    sizing = ("spark", "strip", "radar")
     for tag in svgs:
         assert "viewBox=" in tag, f"no viewBox: {tag}"
-        assert re.search(r'class="(spark|strip)"', tag), f"no sizing class: {tag}"
-    # and the classes must actually be sized responsively in the stylesheet
-    assert re.search(r"\.spark\s*\{[^}]*width:100%", html)
-    assert re.search(r"\.strip\s*\{[^}]*width:100%", html)
+        assert re.search(r'class="(%s)"' % "|".join(sizing), tag), (
+            f"no responsive sizing class: {tag}")
+    for cls in sizing:
+        assert re.search(r"\.%s\s*\{[^}]*width:100%%" % cls, html), (
+            f".{cls} is not sized responsively in the stylesheet")
     assert re.search(r"svg\s*\{[^}]*max-width:100%", html)
 
 
@@ -704,8 +726,25 @@ def test_neither_unit_couples_to_the_other():
                     assert "weatherwatch" not in line, f"{name}: {line}"
 
 
+def _all_service_units():
+    """Every shipped unit, enumerated rather than listed.
+
+    A privilege boundary that holds for the two units someone remembered to
+    name is not a boundary. Enumerating the directory means a new unit is
+    confined by default or fails this test on the way in.
+    """
+    root = Path(__file__).resolve().parents[1] / "deploy" / "systemd"
+    return sorted(p.name for p in root.glob("*.service"))
+
+
+def test_every_shipped_unit_is_covered_by_the_confinement_check():
+    names = _all_service_units()
+    assert len(names) >= 3, names
+    assert "weatherwatch-field.service" in names
+
+
 def test_units_do_not_run_as_root_and_stay_confined():
-    for name in ("weatherwatch-collector.service", "weatherwatch-publish.service"):
+    for name in _all_service_units():
         d = _directives(_unit(name))
         assert d["User"] == ["weatherwatch"], f"{name} must not run as root"
         assert d["NoNewPrivileges"] == ["true"]
@@ -719,6 +758,52 @@ def test_units_do_not_run_as_root_and_stay_confined():
     assert "/var/www" in pub["ReadWritePaths"][0]
     assert "SupplementaryGroups" not in coll
     assert pub["SupplementaryGroups"] == ["labelwatch"]
+    # nothing else may reach the webroot at all
+    for name in _all_service_units():
+        if name == "weatherwatch-publish.service":
+            continue
+        d = _directives(_unit(name))
+        assert d["ReadWritePaths"] == ["/var/lib/weatherwatch"], (
+            f"{name} can write outside the state directory")
+        assert "SupplementaryGroups" not in d, (
+            f"{name} holds a group grant it does not need")
+
+
+def test_the_field_unit_seals_observations_and_publishes_nothing():
+    """The archive writer must not acquire a second published surface.
+
+    `social field` can also render the public field page and the operator-only
+    calibration page. This unit takes neither flag: the canonical report reads
+    the sealed store directly, and the calibration surface stays unpublished by
+    decision (field/DECISIONS.md section 5).
+    """
+    d = _directives(_unit("weatherwatch-field.service"))
+    assert d["Type"] == ["oneshot"]
+    exec_line = " ".join(d["ExecStart"])
+    assert "social field" in exec_line
+    assert "--social-db /var/lib/weatherwatch/social.sqlite" in exec_line
+    assert "--output" not in exec_line, "the unit must not write a page"
+    assert "--station-output" not in exec_line, (
+        "the calibration surface is operator-only and is not published")
+
+
+def test_the_publisher_is_given_the_store_the_page_reads():
+    """Without WW_SOCIAL_DB the page reports Station offline forever."""
+    env = " ".join(_directives(_unit("weatherwatch-publish.service"))["Environment"])
+    assert "WW_SOCIAL_DB=/var/lib/weatherwatch/social.sqlite" in env
+
+
+def test_the_field_and_detect_timers_do_not_fire_together():
+    """Both are writers to one SQLite file; they are offset, not coincident."""
+    import re as _re
+    starts = {}
+    for name in ("weatherwatch-field.timer", "weatherwatch-social-detect.timer"):
+        text = _unit(name)
+        m = _re.search(r"OnBootSec=(\d+)min", text)
+        assert m, f"{name} has no OnBootSec"
+        starts[name] = int(m.group(1))
+        assert "OnUnitActiveSec=1h" in text
+    assert len(set(starts.values())) == 2, f"timers collide: {starts}"
 
 
 def test_timer_publishes_every_five_minutes_without_catchup():

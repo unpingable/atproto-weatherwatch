@@ -163,7 +163,7 @@ def test_first_screen_states_conditions_before_anything_else(page):
     """The state is the first thing on the page, not a summary above a table."""
     html, c = page
     where_state = html.index(c.headline)
-    assert where_state < html.index("Why these conditions?")
+    assert where_state < html.index("Why the instrument says that")
     assert where_state < len(html) // 2
 
 
@@ -177,12 +177,31 @@ def test_technical_detail_is_a_separate_page_not_a_disclosure(storm_parts):
     """
     docs, clim, cond = storm_parts
     html = viz.render_public(docs, clim, {"generated_at": "t"}, cond)
-    assert "<details open><summary>Why these conditions?" in html
     assert "Technical detail" not in html
     station = viz.render_station(docs, clim, {"generated_at": "t"}, cond)
     assert "operator surface, not the public page" in station.lower()
     for marker in ("Meteogram", "n_eff", "Field portrait"):
         assert marker in station and marker not in html
+
+
+def test_the_reasons_are_not_behind_a_disclosure(storm_parts):
+    """The measurement/limit pairing must not need a click.
+
+    It used to sit in `<details open>`, which was visible but one collapse away
+    from not being. A refusal a reader can close is a refusal a screenshot can
+    omit, so the pairing is now plain page content and only the criteria table
+    -- which is reference material, not a claim -- stays foldable.
+    """
+    docs, clim, cond = storm_parts
+    html = viz.render_public(docs, clim, {"generated_at": "t"}, cond)
+    where_pairs = html.index("Why the instrument says that")
+    assert "Not observed" in html[where_pairs:where_pairs + 2000]
+    # nothing between the state and the pairing may open a <details>
+    assert "<details" not in html[:where_pairs], (
+        "the reasons sit inside a disclosure element")
+    # the criteria table, by contrast, is allowed to fold
+    assert "<details" in html[where_pairs:]
+    assert "How conditions are decided" in html
 
 
 def test_public_page_carries_no_jargon(page):

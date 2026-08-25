@@ -319,9 +319,15 @@ def test_section_letters_are_unique_and_ordered(conn, edge_conn, tmp_path):
         social_window=None,
     )
     rendered = (tmp_path / "site" / "index.html").read_text()
-    letters = re.findall(r"<h2>([A-Z]) &middot; |<h2>([A-Z]) · ", rendered)
+    # The lettered sections are the receipts deck, and each is now the summary
+    # of its own disclosure rather than an <h2>. The invariant is the letters,
+    # not the tag they are wrapped in: every section keeps a distinct letter
+    # and they run in order down the page.
+    letters = re.findall(r"<h3>([A-Z]) &middot; |<h3>([A-Z]) · ", rendered)
     letters = [left or right for left, right in letters]
     assert letters and len(letters) == len(set(letters))
+    assert letters == sorted(letters), f"sections out of order: {letters}"
+    assert letters[0] == "A"
 
 
 # --- what the cardinality floor does not do, demonstrated ------------------

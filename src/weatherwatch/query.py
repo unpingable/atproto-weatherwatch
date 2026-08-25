@@ -678,16 +678,33 @@ def total_events_series(
 
 
 def observation_window_health(
-    conn: sqlite3.Connection, run_ids: list[str]
+    conn: sqlite3.Connection, run_ids: list[str], densify: bool = True,
+    max_points: int = 20_000,
 ) -> list[WindowPoint]:
-    """Health-only view: one point per observed window, metric-independent."""
+    """Health-only view, one point per window in the interval.
+
+    Densified like `series`, and for the same reason. A window with no
+    `window_health` row is not a window that went quiet — it is a window
+    nobody was watching, and the two must never be confusable.
+
+    Undensified, this returned only the rows that exist, so the observation
+    health strip laid observed windows side by side and an outage simply
+    *disappeared*: cell N and cell N+1 could be an hour apart with nothing on
+    the page saying so. The strip's own caption promised that unobserved time
+    is hatched and that nothing is smoothed across a gap, and neither was true
+    of a window that had no row at all — the strip could only ever show faults
+    the collector had lived to record.
+
+    `densify=False` returns the raw rows for callers that want exactly the
+    recorded windows.
+    """
     read.assert_summable(conn, run_ids)
     ph = ",".join("?" * len(run_ids))
     rows = conn.execute(
         f"SELECT *, 0 AS count FROM window_health WHERE run_id IN ({ph}) "
         "ORDER BY bucket_start", run_ids,
     ).fetchall()
-    return [
+    points = [
         WindowPoint(
             bucket_start=r["bucket_start"], bucket_width=r["bucket_width"],
             count=r["events_seen"], events_seen=r["events_seen"],
@@ -698,3 +715,39 @@ def observation_window_health(
         )
         for r in rows
     ]
+    if not densify or not points:
+        return points
+
+    # Keyed to a LIST, not to a single point. Consecutive runs can each hold a
+    # partial piece of the same wall-clock minute -- a clean shutdown commits a
+    # partial window and the next run recounts the remainder under its own
+    # run_id -- and both rows are real observations that the run history and
+    # `summary.json` report separately. Collapsing them to one would silently
+    # drop a recorded window, which is the opposite of the bug being fixed.
+    observed: dict = {}
+    for point in points:
+        observed.setdefault(point.bucket_start, []).append(point)
+    width = points[0].bucket_width
+    lo, hi = min(observed), max(observed) + width
+    n = (hi - lo) // width
+    if n > max_points:
+        raise QueryTooLarge(
+            f"{n} windows requested (max {max_points}). Narrow the range: "
+            "silently truncating would turn an incomplete series into one "
+            "that looks complete."
+        )
+    dense: list[WindowPoint] = []
+    b = lo
+    while b < hi:
+        if b in observed:
+            dense.extend(observed[b])
+        else:
+            # NOT observed. Never a row, never a zero.
+            dense.append(WindowPoint(
+                bucket_start=b, bucket_width=width, count=None,
+                events_seen=None, observed_duration_us=0,
+                flags=frozenset({FLAG_UNOBSERVED}),
+                coverage_state=FLAG_UNOBSERVED, run_id=None,
+            ))
+        b += width
+    return dense

@@ -131,8 +131,52 @@ the horizon actually ends is still unknown.
 
 ## C4 — The report has no window, and it just hit its first ceiling
 
-**Status:** candidate. A **stopgap is already deployed**; the actual decision
-is not made. Filed 2026-08-22 during social-lane activation.
+**Status:** partly resolved 2026-08-25 — the **page** is bounded, the
+**archive question is still open**. Filed 2026-08-22 during social-lane
+activation.
+
+### What was done (2026-08-25, public UI campaign)
+
+The third option below — downsampling the *marks* rather than the data — was
+taken. `report.STRIP_COLUMNS` (1,100) and `report.SPARK_COLUMNS` (300) bound
+every chart before it is drawn; `report._collapse` assigns windows to columns
+by integer division, so the collapse is deterministic, and both the health
+strip and the sparklines disclose on the page how many windows a column spans.
+
+The collapse is **worst-case preserving in both directions**, which is what
+makes it a repair rather than a smoothing:
+
+* a column takes the **worst** quality among its windows (`QUALITY_SEVERITY`),
+  so a single unobserved window is never outvoted by clean neighbours;
+* a sparkline column keeps both its **min and its max**, so neither a spike nor
+  a collapse to zero is averaged away.
+
+Measured on a 43,200-window lab estate — nearly double the live estate that
+produced the 11.5 MB page:
+
+| | before | after |
+|---|---|---|
+| `index.html` | 13,416,300 bytes | **374,770 bytes** |
+| `<rect>` elements | 70,425 (live, 24,169 windows) | 1,097 |
+| `<title>` elements | 24,169 (live) | 1,083 |
+
+A separate defect surfaced while bounding the strip and was fixed with it:
+`query.observation_window_health` was not densified, so a window with no health
+row was **omitted** rather than drawn as unobserved. The strip laid observed
+windows side by side across an outage, its own caption promising that
+unobserved time is hatched. It now densifies like `query.series`.
+
+### What is still open
+
+**`summary.json` is unchanged and still grows without bound** — 6.9 MB on the
+same lab estate, because it lists every window individually. That is the part
+C4 called a product decision and it still is: truncating the machine-readable
+record removes evidence, and deciding whether it follows the page's window or
+keeps carrying everything is not a rendering repair.
+
+**The 200,000 ceiling still has a date on it.** Bounding the marks does not
+bound the query; `REPORT_MAX_WINDOWS` is still reached around **2027-01** at
+60 s windows, and the failure mode is still the publish timer going red.
 
 ### What happened
 
@@ -186,9 +230,10 @@ defect whatever is in it.
   on the page;
 * **downsampling the marks** rather than the data: one rect per rendered pixel
   column instead of one per window. Cheapest, changes no stated figure, and
-  does not answer the growth question.
+  does not answer the growth question. **← taken, 2026-08-25.** It did not
+  answer the growth question, exactly as predicted; it removed the symptom.
 
-Not chosen here because every option changes what the published page *claims*
+Not chosen at the time because every option changes what the published page *claims*
 about its own interval, and that is a product decision rather than a repair.
 Whoever takes it should also decide whether `summary.json` follows the page's
 window or keeps carrying everything.

@@ -33,7 +33,11 @@ from .query import Series, WindowPoint
 from .social import section as _social_section
 from .social import api as _social_api
 from .social import projection as _social_projection
+from .social import store as _social_store
 from .social.config import RECEIPT_META_KEY as _SOCIAL_RECEIPT_KEY
+from .social.field import conditions as _conditions
+from .social.field import hero as _hero
+from .social.field import observation as _field_obs
 
 #: Window budget for the report's own queries.
 #:
@@ -164,9 +168,19 @@ CONDITION_COLORS = {
 }
 
 STYLE = """
+/* Typography carries most of the difference between an instrument and a
+   console. Prose, labels and headings are set in the reader's UI face; the
+   monospace is reserved for things that are literally machine text —
+   endpoints, run ids, timestamps, metric keys — and for figures, where
+   tabular numerals make columns line up. Setting the whole page in mono made
+   every sentence look like log output, which is what a visitor then assumed
+   it was. No webfont is loaded: this page makes no external requests. */
 :root {
-  --bg:#f7f7f8; --panel:#ffffff; --ink:#16181d; --muted:#6a7080;
-  --rule:#e2e4ea; --accent:#3b6ea5;
+  --font-sans: system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",
+               Arial,"Noto Sans",sans-serif;
+  --font-mono: ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  --bg:#f4f5f7; --panel:#ffffff; --ink:#15181e; --muted:#666d7c;
+  --rule:#e0e3e9; --accent:#2f6094;
   --ok:#3f8f5f; --seam:#7a6fd0; --lagged:#4f8fbf; --warming:#8a8f9c;
   --partial:#c99a3a; --degraded:#c0632c; --loss:#b03a3a; --gap:#8d2b2b;
   --unobserved:#c9ccd4;
@@ -175,8 +189,8 @@ STYLE = """
 }
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg:#0e1014; --panel:#161920; --ink:#e6e8ee; --muted:#8a90a0;
-    --rule:#262a34; --accent:#7fb2e5;
+    --bg:#0d0f13; --panel:#151920; --ink:#e7e9ef; --muted:#8d94a4;
+    --rule:#242832; --accent:#7fb2e5;
     --ok:#5fbf85; --seam:#a99bf0; --lagged:#6fb2e0; --warming:#9aa0ae;
     --partial:#e0b45a; --degraded:#e08a4a; --loss:#e05c5c; --gap:#c04545;
     --unobserved:#343945;
@@ -186,14 +200,15 @@ STYLE = """
 }
 * { box-sizing:border-box; }
 body {
-  margin:0; padding:24px; background:var(--bg); color:var(--ink);
-  font:14px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  margin:0; padding:26px 24px 40px; background:var(--bg); color:var(--ink);
+  font:15px/1.6 var(--font-sans);
+  -webkit-font-smoothing:antialiased;
   /* Long operational strings (endpoint URLs, run ids) must never widen the
      page. `anywhere` breaks only when a break is actually required, unlike
      `break-all`, which happily splits ordinary numbers mid-digit. */
   overflow-wrap:anywhere;
 }
-.wrap { max-width:1180px; margin:0 auto; }
+.wrap { max-width:1120px; margin:0 auto; }
 
 /* Grid and flex children default to min-width:auto, so a child with an
    intrinsic width (an SVG, a wide table) refuses to shrink and punches out
@@ -205,19 +220,38 @@ body {
 svg { display:block; max-width:100%; overflow:hidden; }
 .spark { width:100%; height:44px; }
 .strip { width:100%; height:26px; }
-h1 { font-size:20px; margin:0 0 2px; letter-spacing:.02em; }
-h2 { font-size:13px; text-transform:uppercase; letter-spacing:.09em;
-     color:var(--muted); margin:28px 0 10px; font-weight:600; }
-.sub { color:var(--muted); margin:0 0 18px; font-size:12.5px; }
+
+/* --- masthead ---------------------------------------------------------- */
+.mast { border-bottom:2px solid var(--ink); padding-bottom:12px;
+        margin-bottom:16px; }
+h1 { font-size:26px; margin:0; letter-spacing:-.015em; font-weight:680;
+     line-height:1.15; }
+h1 .mark { color:var(--accent); }
+.tagline { font-size:14.5px; color:var(--muted); margin:5px 0 0;
+           max-width:62ch; }
+.mast-grid { display:grid; gap:22px; align-items:start;
+             grid-template-columns:repeat(auto-fit,minmax(min(340px,100%),1fr)); }
+.scope { margin:0; padding:12px 15px; border:1px solid var(--rule);
+         border-left:4px solid var(--partial); border-radius:0 6px 6px 0;
+         background:var(--panel); font-size:13.5px; line-height:1.55;
+         max-width:78ch; }
+.scope strong { color:var(--ink); }
+
+h2 { font-family:var(--font-sans); font-size:11.5px; text-transform:uppercase;
+     letter-spacing:.11em; color:var(--muted); margin:30px 0 10px;
+     font-weight:700; }
+h3 { font-size:15px; margin:0 0 6px; font-weight:650; }
+.sub { color:var(--muted); margin:0 0 16px; font-size:13px; max-width:78ch; }
 .panel { background:var(--panel); border:1px solid var(--rule);
-         border-radius:8px; padding:14px 16px; }
+         border-radius:7px; padding:14px 16px; }
 .grid { display:grid; gap:12px; }
 /* minmax(Npx, 1fr) has a HARD floor of Npx: below that the track keeps its
    width and pushes the page sideways. min(Npx, 100%) lets the floor collapse
    to the container on narrow viewports while behaving identically above it. */
 .g2 { grid-template-columns:repeat(auto-fit,minmax(min(330px,100%),1fr)); }
 .g3 { grid-template-columns:repeat(auto-fit,minmax(min(232px,100%),1fr)); }
-.kv { display:grid; grid-template-columns:auto 1fr; gap:3px 14px; }
+.kv { display:grid; grid-template-columns:auto 1fr; gap:3px 16px;
+      font-size:13.5px; }
 .kv dt { color:var(--muted); }
 .kv dd { margin:0; min-width:0; }
 @media (max-width:560px) {
@@ -225,44 +259,115 @@ h2 { font-size:13px; text-transform:uppercase; letter-spacing:.09em;
      URL wraps to one or two characters per line. Stack instead. */
   .kv { grid-template-columns:1fr; gap:0; }
   .kv dt { margin-top:9px; }
-  body { padding:14px; }
+  body { padding:16px 14px 30px; }
+  h1 { font-size:21px; }
+  /* The masthead must not push the reading off a phone screen. The denial
+     stays above the weather — it is the most misread thing about this
+     project — but it does not need desktop leading to do that. Measured: the
+     state headline was landing around 640px on a 390px viewport, i.e. at or
+     below the fold on a common phone. */
+  .tagline { font-size:13px; }
+  .scope { font-size:12.5px; line-height:1.5; padding:10px 12px; }
+  .mast { padding-bottom:9px; margin-bottom:12px; }
+  .mast-grid { gap:14px; }
+  .station .note { font-size:11.5px; }
 }
-.metric-name { font-size:12px; color:var(--muted); }
-.metric-val { font-size:19px; font-weight:600; }
-.metric-unit { font-size:11px; color:var(--muted); font-weight:400; }
-table { border-collapse:collapse; width:100%; font-size:12.5px; }
-th,td { text-align:left; padding:5px 9px; border-bottom:1px solid var(--rule); }
-th { color:var(--muted); font-weight:600; text-transform:uppercase;
-     font-size:10.5px; letter-spacing:.06em; }
-td.num { text-align:right; font-variant-numeric:tabular-nums; }
+/* Machine text and figures. Everything else is prose. */
+.mono, code, .kv dd, td.num, .metric-val, .ratio-expression {
+  font-family:var(--font-mono); font-variant-numeric:tabular-nums; }
+.kv dd { font-size:12.8px; }
+.metric-name { font-size:12.5px; color:var(--muted); font-family:var(--font-sans); }
+.metric-val { font-size:20px; font-weight:600; letter-spacing:-.01em; }
+.metric-unit { font-size:11px; color:var(--muted); font-weight:400;
+               font-family:var(--font-sans); }
+table { border-collapse:collapse; width:100%; font-size:13px; }
+th,td { text-align:left; padding:6px 10px; border-bottom:1px solid var(--rule); }
+th { color:var(--muted); font-weight:650; text-transform:uppercase;
+     font-size:10.5px; letter-spacing:.07em; font-family:var(--font-sans); }
+td.num { text-align:right; }
 /* Condition badges: outline pills, deliberately not filled alert chips.
    These are z-score cuts against a short trailing baseline, not calibrated
    alarms, and they should not read as authoritative. */
 .pill { display:inline-block; padding:1px 8px; border-radius:9px;
         font-size:11px; line-height:1.55; border:1px solid currentColor;
-        white-space:nowrap; letter-spacing:.03em; vertical-align:baseline; }
+        white-space:nowrap; letter-spacing:.03em; vertical-align:baseline;
+        font-family:var(--font-sans); }
 td .pill { min-width:5.6em; text-align:center; }
-.note { color:var(--muted); font-size:11px; margin-top:3px; }
-.legend { display:flex; flex-wrap:wrap; gap:12px; font-size:11.5px;
+.note { color:var(--muted); font-size:12px; margin-top:5px; max-width:78ch; }
+.legend { display:flex; flex-wrap:wrap; gap:12px; font-size:12px;
           color:var(--muted); margin-top:9px; }
 .legend span { display:flex; align-items:center; gap:5px; }
-.swatch { width:11px; height:11px; border-radius:2px; display:inline-block; }
+.swatch { width:11px; height:11px; border-radius:2px; display:inline-block;
+          flex:0 0 auto; }
 /* Dense tables get a LOCAL horizontal scroller. The min-width keeps columns
    legible and makes the scroller actually engage, instead of the table
    squeezing itself into unreadable slivers or shoving the page sideways. */
 .scroll { overflow-x:auto; }
 .scroll table { min-width:32rem; }
 .scroll.wide table { min-width:46rem; }
-.ratio-expression { white-space:nowrap; font-variant-numeric:tabular-nums; }
-footer { margin-top:34px; padding-top:14px; border-top:1px solid var(--rule);
-         color:var(--muted); font-size:11.5px; }
-.warn { border-left:3px solid var(--partial); padding-left:11px; }
+.ratio-expression { white-space:nowrap; }
+footer { margin-top:38px; padding-top:14px; border-top:1px solid var(--rule);
+         color:var(--muted); font-size:12px; }
+.warn { border-left:3px solid var(--partial); padding-left:12px; }
+
+/* --- station bar: freshness, loudly ------------------------------------ */
+/* 160px, not 180px: the panel's own 1px borders take the content box to
+   360px on a 390px viewport, and two 180px tracks plus the 1px gap need 361.
+   The bar fell back to a single column and cost ~110px of vertical space
+   above the reading. */
+.station { display:grid; gap:1px; background:var(--rule);
+           grid-template-columns:repeat(auto-fit,minmax(min(160px,100%),1fr));
+           border:1px solid var(--rule); border-radius:7px; overflow:hidden;
+           margin:0 0 8px; }
+.station > div { background:var(--panel); padding:10px 14px; }
+.station .k { font-size:10px; text-transform:uppercase; letter-spacing:.09em;
+              color:var(--muted); font-weight:700; margin-bottom:3px; }
+.station .v { font-size:13.5px; font-family:var(--font-mono);
+              font-variant-numeric:tabular-nums; }
+.station .state { font-size:15px; font-weight:700; font-family:var(--font-sans);
+                  letter-spacing:.02em; text-transform:uppercase; }
+.station .flag { box-shadow:inset 4px 0 0 var(--fresh-ink,var(--accent)); }
+.fresh-current { --fresh-ink:var(--ok); }
+.fresh-partial { --fresh-ink:var(--partial); }
+.fresh-stale   { --fresh-ink:var(--degraded); }
+.fresh-unavailable { --fresh-ink:var(--muted); }
+.station .flag .state { color:var(--fresh-ink); }
+
+/* --- receipts deck ----------------------------------------------------- */
+.deck { margin:44px 0 0; padding-top:16px; border-top:2px solid var(--ink); }
+/* An <h2> for the document outline, but not the small uppercase label the
+   other h2s are: this one titles a deck, not a section. */
+.deck-title { font-size:17px; font-weight:680; margin:0 0 4px;
+              text-transform:none; letter-spacing:-.01em; color:var(--ink); }
+details.rc { border:1px solid var(--rule); border-radius:7px;
+             background:var(--panel); margin:0 0 10px; }
+details.rc > summary { cursor:pointer; padding:11px 15px; font-size:13.5px;
+                       list-style:none; display:flex; gap:10px;
+                       align-items:baseline; flex-wrap:wrap; }
+details.rc > summary::-webkit-details-marker { display:none; }
+details.rc > summary::before { content:"\\25B8"; color:var(--muted);
+                               flex:0 0 auto; }
+details.rc[open] > summary::before { content:"\\25BE"; }
+details.rc > summary:hover { color:var(--accent); }
+details.rc > summary:focus-visible { outline:2px solid var(--accent);
+                                     outline-offset:-2px; }
+details.rc > summary h3 { display:inline; font-size:13.5px; font-weight:650;
+                          margin:0; }
+details.rc > summary .hint { color:var(--muted); font-size:12.5px; }
+details.rc .body { padding:0 15px 15px; }
+/* Keyboard focus must be visible everywhere, not only on summaries. */
+a:focus-visible, summary:focus-visible, details:focus-visible {
+  outline:2px solid var(--accent); outline-offset:2px; }
+@media (prefers-reduced-motion: reduce) {
+  * { animation:none !important; transition:none !important; }
+}
+
+.beef { text-align:center; padding:22px; color:var(--muted); }
+.beef .big { font-size:17px; letter-spacing:.14em; color:var(--ink);
+             opacity:.5; font-weight:650; }
 .freshness { margin:12px 0 18px; border-left:4px solid var(--accent); }
 .freshness strong { text-transform:uppercase; letter-spacing:.05em; }
-.beef { text-align:center; padding:20px; color:var(--muted); }
-.beef .big { font-size:17px; letter-spacing:.13em; color:var(--ink);
-             opacity:.55; }
-""" + _social_section.STYLE_ADDITION
+""" + _hero.STYLE + _social_section.STYLE_ADDITION
 
 HATCH_DEF = """
 <defs>
@@ -401,6 +506,82 @@ def _freshness(health_points, generated_at: str, bucket_width: int) -> dict:
     }
 
 
+#: What the station bar says each freshness state means, in one clause a
+#: visitor can act on. Deliberately parallel to `_freshness_panel`: the bar is
+#: the same fact at the top of the page, not a second opinion.
+FRESHNESS_SHORT = {
+    "current": "the newest window is complete and recent",
+    "partial": "the newest window is still filling — not current conditions",
+    "stale": "no recent window; this page is behind the stream",
+    "unavailable": "no observed window at all — which is not calm",
+}
+
+
+def _clock(iso: str) -> str:
+    """`2026-08-25T19:52:00Z` -> `2026-08-25 19:52 UTC`."""
+    if not iso or iso == "—":
+        return "—"
+    text = str(iso)
+    if len(text) >= 16 and text[10] in "Tt":
+        return f"{text[:10]} {text[11:16]} UTC"
+    return text
+
+
+def _station_bar(freshness: dict, latest, generated_at: str) -> str:
+    """Freshness, at the top, in four cells nobody has to go looking for.
+
+    The stale-query bug is why this is a band across the page rather than a
+    line in the methodology: for a week the live page reported conditions from
+    a fortnight earlier and nothing on it disagreed. A reader must be able to
+    answer *is this now?* before reading anything else, and the four facts that
+    answer it — what state the observation is in, when the last complete
+    window closed, when the page was built, and how wide a window is — are the
+    four cells here.
+
+    Nothing here is called "live". The page is a static artifact published on
+    a timer, and it says so.
+    """
+    state = freshness["state"]
+    newest = freshness.get("newest_complete_observation_end") or "—"
+    age = _hero.age_phrase(newest, generated_at) if newest != "—" else ""
+    partial = " · a further window is still filling" if state == "partial" else ""
+    return f"""<div class="station fresh-{_esc(state)}"
+     data-freshness="{_esc(state)}" role="group" aria-label="observation freshness">
+  <div class="flag"><div class="k">observation</div>
+    <div class="state">{_esc(state)}</div>
+    <div class="note" style="margin-top:2px">{_esc(FRESHNESS_SHORT[state])}</div></div>
+  <div><div class="k">newest complete observation</div>
+    <div class="v">{_esc(_clock(newest))}</div>
+    <div class="note" style="margin-top:2px">{_esc(age.lstrip(" —") or "—")}
+    {_esc(partial)}</div></div>
+  <div><div class="k">this page was published</div>
+    <div class="v">{_esc(_clock(generated_at))}</div>
+    <div class="note" style="margin-top:2px">static artifact, rebuilt every
+    {_fmt(PUBLICATION_INTERVAL_S // 60, 0)} minutes — never a live gauge</div></div>
+  <div><div class="k">observation window</div>
+    <div class="v">{_esc(latest.bucket_width)} s</div>
+    <div class="note" style="margin-top:2px">every rate on this page is per
+    window, not instantaneous</div></div>
+</div>"""
+
+
+def _receipt(title: str, hint: str, body: str, open_: bool = False) -> str:
+    """One collapsible section of the receipts deck.
+
+    Progressive disclosure, not deletion: every figure that was on the page
+    before is still on the page and still in the DOM, so a reader who wants
+    the paperwork gets all of it and a reader who wants the weather is not
+    made to scroll past it first.
+    """
+    # The title is a real heading, not a bold span. A reader navigating by
+    # heading should be able to reach every section of the deck; `<h3>` inside
+    # `<summary>` is valid and keeps the disclosure keyboard-operable.
+    return (f'<details class="rc"{" open" if open_ else ""}>'
+            f'<summary><h3>{_esc(title)}</h3>'
+            f'<span class="hint">{_esc(hint)}</span></summary>'
+            f'<div class="body">{body}</div></details>')
+
+
 def _freshness_panel(freshness: dict, first: int | None,
                      last: int | None) -> str:
     state = freshness["state"]
@@ -423,11 +604,98 @@ newest observation: {_esc(freshness['newest_observation_end'])}
 
 # --- SVG -------------------------------------------------------------------
 
-def _sparkline(points: list[WindowPoint], width=300, height=44) -> str:
+#: Column budgets. Every chart is bounded BEFORE it is drawn, so page size is
+#: a function of the chart rather than of how long the instrument has been
+#: running.
+#:
+#: This is C4 in `docs/CANDIDATES.md`, observed rather than predicted: the live
+#: page reached **11.5 MB** — 70,425 `<rect>` and 24,169 `<title>` elements —
+#: because the health strip drew one mark per window and each of sixteen
+#: sparklines drew one shading rect per bad window. Nothing was wrong with the
+#: data; the chart simply had no ceiling. A reader on a phone downloaded eleven
+#: megabytes to look at a strip 1,100 pixels wide.
+#:
+#: The collapse is deterministic (fixed column count, integer window→column
+#: assignment, no sampling) and disclosed on the page.
+STRIP_COLUMNS = 1100
+SPARK_COLUMNS = 300
+
+#: Worst-first. A column that collapses many windows takes the **worst**
+#: quality among them, never the commonest and never the mean: a strip whose
+#: job is to make gaps impossible to miss must not let a gap be outvoted by
+#: its clean neighbours. `unobserved` outranks everything because "nobody was
+#: watching" is the one state that must never be confusable with data.
+QUALITY_SEVERITY = ("unobserved", "gap", "loss", "degraded", "partial",
+                    "warming_up", "seam", "lagged", "clean")
+
+
+def _worst(qualities) -> str:
+    for q in QUALITY_SEVERITY:
+        if q in qualities:
+            return q
+    return "clean"
+
+
+class _Column:
+    """One rendered column, summarising the windows that fall in it."""
+
+    __slots__ = ("lo", "hi", "quality", "unobserved", "n", "start")
+
+    def __init__(self, start):
+        self.lo = None
+        self.hi = None
+        self.quality = []
+        self.unobserved = False
+        self.n = 0
+        self.start = start
+
+
+def _collapse(points, columns: int) -> tuple[list, int]:
+    """Bin windows into at most `columns` columns, worst-case preserving.
+
+    Returns `(columns, windows_per_column)`. Rates keep their min and max so a
+    spike is never averaged away; quality keeps the worst so a fault is never
+    smoothed over. Assignment is `index * columns // n`, which is integer and
+    stable — the same store renders the same columns every time.
+
+    Below the budget nothing is collapsed and every window is its own column,
+    so short intervals are unaffected and the chart degrades to exactly what it
+    drew before.
+    """
+    n = len(points)
+    if n == 0:
+        return [], 1
+    width = max(1, -(-n // columns))          # ceil, so we never exceed budget
+    out: list = []
+    for i, p in enumerate(points):
+        slot = i // width
+        if slot >= len(out):
+            out.append(_Column(p.bucket_start))
+        col = out[slot]
+        col.n += 1
+        if p.rate is None:
+            col.unobserved = True
+        else:
+            col.lo = p.rate if col.lo is None else min(col.lo, p.rate)
+            col.hi = p.rate if col.hi is None else max(col.hi, p.rate)
+        col.quality.append(p.quality)
+    for col in out:
+        col.quality = _worst(col.quality)
+    return out, width
+
+
+def _sparkline(points: list[WindowPoint], width=SPARK_COLUMNS,
+               height=44, label: str = "") -> str:
     """Rate over time. Unobserved windows break the line and are hatched.
 
     A hole in observation must be visually impossible to mistake for a run of
     zeros, so it gets both treatments: no line, plus a hatched band.
+
+    Above `SPARK_COLUMNS` windows the series is collapsed one column per
+    rendered pixel and the column's **max** carries the line, with the min–max
+    range drawn behind it as a band. Averaging would erase exactly the spikes
+    a sparkline exists to show; taking the max alone would hide a collapse to
+    zero. Both bounds are drawn, so neither is lost.
 
     `width`/`height` define the viewBox coordinate space only — they are NOT
     emitted as pixel attributes. The rendered size comes from CSS (`.spark`,
@@ -438,34 +706,45 @@ def _sparkline(points: list[WindowPoint], width=300, height=44) -> str:
     if not points:
         return f'<svg class="spark" viewBox="0 0 {width} {height}"></svg>'
 
-    n = len(points)
+    cols, per = _collapse(points, width)
+    n = len(cols)
     step = width / max(n, 1)
-    rates = [p.rate for p in points if p.rate is not None]
-    top = max(rates) if rates else 1.0
+    tops = [c.hi for c in cols if c.hi is not None]
+    top = max(tops) if tops else 1.0
     top = top if top > 0 else 1.0
     pad = 3
 
     def y(v: float) -> float:
         return height - pad - (v / top) * (height - 2 * pad)
 
-    bands, segments, cur = [], [], []
-    for i, p in enumerate(points):
+    bands, segments, lows, cur, curlo = [], [], [], [], []
+    for i, c in enumerate(cols):
         x = i * step
-        if p.rate is None:
+        if c.unobserved:
             bands.append(f'<rect x="{x:.1f}" y="0" width="{step:.2f}" '
                          f'height="{height}" fill="url(#unobs)"/>')
-            if cur:
-                segments.append(cur)
-                cur = []
-            continue
-        if p.quality in ("degraded", "gap", "loss", "partial"):
+        if c.quality in ("degraded", "gap", "loss", "partial"):
             bands.append(f'<rect x="{x:.1f}" y="0" width="{step:.2f}" '
-                         f'height="{height}" fill="{QUALITY_COLORS[p.quality]}" '
+                         f'height="{height}" fill="{QUALITY_COLORS[c.quality]}" '
                          f'opacity="0.16"/>')
-        cur.append((x + step / 2, y(p.rate)))
+        if c.hi is None:
+            if cur:
+                segments.append(cur); lows.append(curlo)
+                cur, curlo = [], []
+            continue
+        cur.append((x + step / 2, y(c.hi)))
+        curlo.append((x + step / 2, y(c.lo)))
     if cur:
-        segments.append(cur)
+        segments.append(cur); lows.append(curlo)
 
+    # min-max range, one filled path per unbroken segment
+    ranges = "".join(
+        '<polygon fill="var(--accent)" opacity="0.18" points="%s"/>'
+        % " ".join(f"{px:.1f},{py:.1f}"
+                   for px, py in list(seg) + list(reversed(lo)))
+        for seg, lo in zip(segments, lows)
+        if len(seg) > 1 and any(a[1] != b[1] for a, b in zip(seg, lo))
+    ) if per > 1 else ""
     paths = "".join(
         '<polyline fill="none" stroke="var(--accent)" stroke-width="1.6" '
         'stroke-linejoin="round" points="%s"/>'
@@ -476,30 +755,54 @@ def _sparkline(points: list[WindowPoint], width=300, height=44) -> str:
         f'<circle cx="{seg[0][0]:.1f}" cy="{seg[0][1]:.1f}" r="1.7" '
         f'fill="var(--accent)"/>' for seg in segments if len(seg) == 1
     )
+    # A chart with `role="img"` and no name is announced as "image" and
+    # nothing else. The label carries what the picture carries: what is
+    # plotted, over how many windows, and its range.
+    unobs = sum(1 for c in cols if c.unobserved)
+    alt = (f"{label or 'rate'} per window over {len(points):,} windows, "
+           f"ranging from {_fmt(min((c.lo for c in cols if c.lo is not None), default=None), 2)} "
+           f"to {_fmt(top, 2)} events per second"
+           + (f"; {unobs} column{'' if unobs == 1 else 's'} contain "
+              f"unobserved windows, drawn hatched with the line broken"
+              if unobs else "; every window in range was observed"))
     return (f'<svg class="spark" viewBox="0 0 {width} {height}" '
-            f'preserveAspectRatio="none" role="img">'
-            f'{HATCH_DEF}{"".join(bands)}{paths}{dots}</svg>')
+            f'preserveAspectRatio="none" role="img" aria-label="{_esc(alt)}">'
+            f'{HATCH_DEF}{"".join(bands)}{ranges}{paths}{dots}</svg>')
 
 
-def _health_strip(points: list[WindowPoint], width=1100, height=26) -> str:
-    """One cell per window, coloured by quality. Gaps stay visible in place."""
+def _health_strip(points: list[WindowPoint],
+                  width=STRIP_COLUMNS, height=26) -> tuple[str, int]:
+    """One cell per column, coloured by quality. Gaps stay visible in place.
+
+    Returns `(svg, windows_per_column)` so the caller can disclose the
+    collapse rather than let the reader assume one cell is one window.
+
+    A column carries the worst quality among its windows — see
+    `QUALITY_SEVERITY`. That is the only collapse that keeps the strip's
+    promise: unobserved time and faults stay visible at their real position,
+    and the cost is that a column may look worse than most of its interval,
+    which is the safe direction to be wrong in.
+    """
     if not points:
-        return ""
-    n = len(points)
+        return "", 1
+    cols, per = _collapse(points, width)
+    n = len(cols)
     step = width / n
     cells = []
-    for i, p in enumerate(points):
-        q = p.quality
+    for i, c in enumerate(cols):
+        q = c.quality
         fill = "url(#unobs)" if q == "unobserved" else QUALITY_COLORS.get(q, "var(--ok)")
-        when = _iso(p.bucket_start * 1_000_000)
-        title = f"{when} — {q}: {QUALITY_HELP.get(q, '')}"
+        when = _iso(c.start * 1_000_000)
+        span = f" (worst of {c.n} windows)" if c.n > 1 else ""
+        title = f"{when} — {q}: {QUALITY_HELP.get(q, '')}{span}"
         cells.append(
             f'<rect x="{i * step:.2f}" y="0" width="{max(step - 0.5, 0.6):.2f}" '
             f'height="{height}" fill="{fill}"><title>{_esc(title)}</title></rect>'
         )
     return (f'<svg class="strip" viewBox="0 0 {width} {height}" '
-            f'preserveAspectRatio="none" role="img">'
-            f'{HATCH_DEF}{"".join(cells)}</svg>')
+            f'preserveAspectRatio="none" role="img" aria-label="observation '
+            f'quality for each of {n} columns across the reported interval">'
+            f'{HATCH_DEF}{"".join(cells)}</svg>', per)
 
 
 def _legend(keys) -> str:
@@ -577,9 +880,7 @@ def _section_status(runs, health_points, latest, metric_totals) -> str:
         f'while missing no events.</div>'
     ) if saturated else ""
 
-    return f"""
-<h2>A · Observation status</h2>
-<div class="grid g2">
+    return f"""<div class="grid g2">
   <div class="panel">
     <dl class="kv">
       <dt>Observation source</dt><dd>{_esc(latest.endpoint)}</dd>
@@ -636,20 +937,36 @@ def _section_weather(series_map: dict[str, Series]) -> str:
         if s is None or not s.observed_points:
             continue
         pts = list(s.points)
+        # Rendered, not hovered. These sentences say what the card does NOT
+        # claim about a relationship, and a refusal that only exists in a
+        # `title` attribute does not exist on a phone, for a screen reader, or
+        # in a screenshot.
         help_text = CARD_HELP.get(label)
-        title = f' title="{_esc(help_text)}"' if help_text else ""
+        note = f'<p class="note">{_esc(help_text)}</p>' if help_text else ""
         cards.append(f"""
 <div class="panel">
-  <div class="metric-name"{title}>{_esc(label)}</div>
+  <div class="metric-name">{_esc(label)}</div>
   <div class="metric-val">{_fmt(s.mean_rate, 2)}
     <span class="metric-unit">/s mean · {_fmt(s.total, 0)} total</span></div>
-  {_sparkline(pts)}
+  {_sparkline(pts, label=label)}
+  {note}
 </div>""")
-    return ("<h2>B · Activity weather</h2>"
-            '<p class="sub">Each figure is the <strong>mean rate over the '
+    windows = max((len(_card_series(series_map, spec).points)
+                   for spec in PRIMITIVES
+                   if _card_series(series_map, spec) is not None), default=0)
+    per = max(1, -(-windows // SPARK_COLUMNS)) if windows else 1
+    collapse = (
+        f'<p class="sub">Above {SPARK_COLUMNS:,} windows a sparkline is drawn '
+        f'one column per rendered pixel; here each column spans <strong>{per} '
+        f'windows</strong>, with the line following the column maximum and the '
+        f'shaded range showing its minimum to maximum. Averaging would erase '
+        f'the spikes a sparkline exists to show, so neither bound is dropped.</p>'
+    ) if per > 1 else ""
+    return ('<p class="sub">Each figure is the <strong>mean rate over the '
             'observed interval</strong>, not the current rate. The sparkline '
             'shows the per-window series it averages.</p>'
-            f'<div class="grid g3">{"".join(cards)}</div>')
+            + collapse
+            + f'<div class="grid g3">{"".join(cards)}</div>')
 
 
 def _section_conditions(conn, run_ids, series_map, totals_series) -> str:
@@ -721,9 +1038,7 @@ def _section_conditions(conn, run_ids, series_map, totals_series) -> str:
         if tlast else "All events — insufficient baseline"
     )
 
-    return f"""
-<h2>C · Derived conditions</h2>
-<div class="panel" style="margin-bottom:12px">{total_line}</div>
+    return f"""<div class="panel" style="margin-bottom:12px">{total_line}</div>
 <div class="grid g2">
   <div class="panel scroll">
     <table><thead><tr><th>ratio</th><th>overall: numerator / denominator = ratio</th>
@@ -772,11 +1087,18 @@ def _section_health_strip(health_points) -> str:
         if p.quality not in present:
             present.append(p.quality)
     order = [k for k in QUALITY_COLORS if k in present]
-    return f"""
-<h2>D · Observation health</h2>
-<div class="panel">
-  {_health_strip(health_points)}
+    strip, per = _health_strip(health_points)
+    collapse = (
+        f'<p class="note">Each column spans <strong>{per} windows</strong> and '
+        f'shows the <strong>worst</strong> quality among them — {len(health_points):,} '
+        f'windows across {STRIP_COLUMNS} columns. A column therefore never looks '
+        f'better than its interval, only worse: a fault outvoted by clean '
+        f'neighbours would defeat the point of the strip.</p>'
+    ) if per > 1 else ""
+    return f"""<div class="panel">
+  {strip}
   {_legend(order)}
+  {collapse}
   <p class="sub warn" style="margin:12px 0 0">Unobserved time is hatched and
   is <strong>not</strong> zero activity — it is time nobody was watching.
   Degraded and gapped windows are shaded where they happened; nothing is
@@ -785,9 +1107,7 @@ def _section_health_strip(health_points) -> str:
 
 
 def _section_beef() -> str:
-    return """
-<h2>F · Beef conditions</h2>
-<div class="panel beef">
+    return """<div class="panel beef">
   <div class="big">GLOBAL BEEF INDEX</div>
   <div style="margin-top:6px">undefined — calibration not assumed</div>
   <div style="margin-top:10px;font-size:11.5px;opacity:.75">
@@ -801,12 +1121,55 @@ def _section_beef() -> str:
 
 def _build_html(conn, run_ids, runs, latest, series_map, totals_series,
                 health_points, metric_totals, generated_at,
-                public_url, social_projection=None, freshness=None) -> str:
+                public_url, social_projection=None, freshness=None,
+                conditions=None, field_obs=None, field_clim=None) -> str:
+    """Assemble the page as two decks.
+
+    **The reading**, which a visitor came for: what the conditions are, why the
+    instrument says so, what it refuses to say, and whether the number is
+    current. **The receipts**, which are why the reading can be believed: the
+    primitives it is built on, the observation's own health, and the run
+    history. Everything that was on this page before is still on it. The
+    change is that the paperwork no longer has to be read first.
+
+    The negative scope statement stays in the masthead, above both decks,
+    because it is the single most misread thing about this project and a
+    reader who bounces after four seconds should still have met it.
+    """
     first = min((point.bucket_start for point in health_points), default=None)
     last = max((point.bucket_start + point.bucket_width for point in health_points),
                default=None)
     freshness = freshness or _freshness(
         health_points, generated_at, latest.bucket_width)
+    conditions = conditions or {}
+    field_obs = field_obs or []
+    field_clim = field_clim or {}
+
+    obs_s = sum(p.observed_seconds for p in health_points if p.observed)
+    nominal = (last - first) if (first is not None and last is not None) else 0
+    coverage = (100 * obs_s / nominal) if nominal else None
+    quality_counts: dict[str, int] = {}
+    for point in health_points:
+        quality_counts[point.quality] = quality_counts.get(point.quality, 0) + 1
+    dominant = max(quality_counts.items(), key=lambda kv: kv[1], default=("—", 0))
+
+    total_dep = derive.rolling_departures(totals_series)
+    tlast = next((d for d in reversed(total_dep) if d.value is not None), None)
+    c_hint = (f"all events {_fmt(tlast.value, 1)}/s against a "
+              f"{_fmt(tlast.baseline_mean, 1)}/s baseline · {tlast.condition}"
+              if tlast else "baseline too short to compare against")
+
+    episodes = len(social_projection.episodes) if social_projection else 0
+    e_hint = (f"{episodes} disclosure-qualified period"
+              f"{'' if episodes == 1 else 's'}"
+              if social_projection and social_projection.available
+              else "no episodes projected")
+
+    history = _hero.recent_states(field_obs, field_clim) if field_obs else []
+    reading = _hero.render(conditions, field_obs, field_clim, history=history,
+                           generated_at=generated_at,
+                           heading="Current conditions") if conditions else ""
+
     return f"""<!doctype html>
 <html lang="en"><head>
 <meta charset="utf-8">
@@ -815,39 +1178,75 @@ def _build_html(conn, run_ids, runs, latest, series_map, totals_series,
 <title>weatherwatch · platform weather</title>{_share_meta(public_url)}
 <style>{STYLE}</style>
 </head><body><div class="wrap">
-<h1>weatherwatch · platform weather</h1>
-<p class="sub warn"><strong>Despite the name, this does not measure conflict,
+
+<header class="mast"><div class="mast-grid">
+<div>
+<h1><span class="mark">weatherwatch</span> · platform weather</h1>
+<p class="tagline">A weather station pointed at the public ATProto firehose.
+It reports what the network is <em>doing</em> — how fast events are happening,
+and how well they are being observed.</p>
+</div>
+<p class="scope"><strong>Despite the name, this does not measure conflict,
 sentiment, users, or content.</strong> It counts how fast aggregate ATProto
 events occur — posts, likes, follows, blocks, deletes — and how well it is
 observing them. Public artifacts contain no account identifiers, no social
 graph, read no post text, and detect no dispute. Disclosure-limited social
-periods are not claimed anonymous. <em>Global Beef Index</em> is a joke name for
-a composite that does not exist.</p>
-{_freshness_panel(freshness, first, last)}
-<p class="sub">Cortisol accounting for the ATProto firehose — event velocity,
-not affect. Aggregate activity observed from
-<strong>{_esc(latest.endpoint)}</strong> during the stated observation
-interval. Counts describe what this endpoint delivered; they are not a claim
-about the network's total activity, and no relay is authoritative or
-complete.</p>
+periods are not claimed anonymous. <em>Global Beef Index</em> is a joke name
+for a composite that does not exist. Cortisol accounting for the ATProto
+firehose — event velocity, not affect.</p>
+</div></header>
+
+{_station_bar(freshness, latest, generated_at)}
+<p class="note">Observed from <span class="mono">{_esc(latest.endpoint)}</span>
+over {_esc(_clock(_iso(first * 1_000_000 if first is not None else None)))}
+→ {_esc(_clock(_iso(last * 1_000_000 if last is not None else None)))}.
+Counts describe what this endpoint delivered; they are not a claim about the
+network's total activity, and no relay is authoritative or complete.</p>
+
+{reading}
+
+<div class="deck">
+<h2 class="deck-title">The receipts</h2>
+<p class="sub">Everything the reading above is built from, and everything
+needed to disbelieve it: the primitive rates, the ratios, the health of the
+observation itself, and the run history. Nothing here has been removed from
+the page — it has been folded, so that the weather does not arrive behind the
+paperwork.</p>
 <p class="sub warn">This is measured, not hypothetical. A controlled probe
 (2026-08-08) compared two same-region public Jetstream endpoints over one
-interval and found their post volumes differing by <strong>~1.61&times;</strong>,
-with a same-endpoint self-control of 1.000 — so relays are demonstrably not
-interchangeable. Rates here are <strong>as observed at
-{_esc(latest.endpoint)}</strong> and are not estimates of total-network
-activity. That ratio is an <em>inter-observer comparison</em>, not a coverage
-or completeness figure: neither observer has a canonical denominator.</p>
-{_section_status(runs, health_points, latest, metric_totals)}
-{_section_weather(series_map)}
-{_section_conditions(conn, run_ids, series_map, totals_series)}
-{_section_health_strip(health_points)}
-{_social_section.render(social_projection) if social_projection else ""}
-{_section_beef()}
+interval and found their post volumes differing by
+<strong>~1.61&times;</strong>, with a same-endpoint self-control of 1.000 — so
+relays are demonstrably not interchangeable. Rates here are <strong>as
+observed at {_esc(latest.endpoint)}</strong> and are not estimates of
+total-network activity. That ratio is an <em>inter-observer comparison</em>,
+not a coverage or completeness figure: neither observer has a canonical
+denominator.</p>
+
+{_receipt("A · Observation status",
+          f"{_fmt(coverage, 1)}% of the interval observed · "
+          f"{len(runs)} run{'' if len(runs) == 1 else 's'} · "
+          f"{len(health_points)} windows",
+          _freshness_panel(freshness, first, last)
+          + _section_status(runs, health_points, latest, metric_totals))}
+{_receipt("B · Activity weather",
+          "16 primitive event rates, each with its own per-window series",
+          _section_weather(series_map), open_=True)}
+{_receipt("C · Derived conditions", c_hint,
+          _section_conditions(conn, run_ids, series_map, totals_series))}
+{_receipt("D · Observation health",
+          f"{len(health_points)} windows · mostly {_esc(dominant[0])}",
+          _section_health_strip(health_points), open_=True)}
+{_receipt(_social_section.TITLE, e_hint,
+          _social_section.render(social_projection))
+ if social_projection else ""}
+{_receipt("F · Beef conditions", "the composite that does not exist",
+          _section_beef())}
+</div>
+
 <footer>
-Generated {_esc(generated_at)} · collector v{_esc(COLLECTOR_VERSION)} ·
-public artifacts contain no DIDs, handles, record keys, CIDs, event-supplied AT
-URIs or text.
+Generated <span class="mono">{_esc(generated_at)}</span> · collector
+v{_esc(COLLECTOR_VERSION)} · public artifacts contain no DIDs, handles, record
+keys, CIDs, event-supplied AT URIs or text.
 The bounded local edge custody stated above is not published. Monotonic stream
 time is not evidence of complete observation.
 </footer>
@@ -855,7 +1254,7 @@ time is not evidence of complete observation.
 
 
 def _summary_json(runs, latest, series_map, totals_series, health_points,
-                  generated_at, freshness=None) -> dict:
+                  generated_at, freshness=None, conditions=None) -> dict:
     first = min((p.bucket_start for p in health_points), default=None)
     last = max((p.bucket_start + p.bucket_width for p in health_points),
                default=None)
@@ -873,6 +1272,13 @@ def _summary_json(runs, latest, series_map, totals_series, health_points,
         },
         "generated_at": generated_at,
         "freshness": freshness,
+        # The headline reading, in the same shape the page renders. A machine
+        # reader should not have to scrape prose to learn the state, and it
+        # must get the refusals with it -- `universal_not_observed`,
+        # `cannot_see` and the per-measurement `pairings` all ride along, so
+        # the limit cannot be dropped by consuming the JSON instead of the
+        # page.
+        "conditions": conditions or None,
         "collector_version": COLLECTOR_VERSION,
         "claim": ("Aggregate activity observed from this Jetstream source "
                   "during the stated observation interval."),
@@ -932,6 +1338,59 @@ def _summary_json(runs, latest, series_map, totals_series, health_points,
             "completeness figure: there is no canonical denominator.",
         ],
     }
+
+
+def _load_conditions(social_db, generated_at: str) -> tuple[dict, list, dict]:
+    """Current conditions, from the sealed field observations.
+
+    The report does not *compute* the field. Sealing one content-addressed
+    observation per window over a fortnight of minute windows is seconds of
+    work, and the publisher runs every five minutes; the archive exists so
+    that the page can be a reader of it. `weatherwatch social field` is the
+    writer, on its own timer.
+
+    Every failure resolves to **station offline with the reason attached**,
+    never to calm and never to an exception. A page that renders a reassuring
+    state because its data source was missing is the single worst thing this
+    instrument could do, so the fallbacks all say what went wrong instead:
+    no store configured, no baseline sealed yet, or nothing filed against it.
+    """
+    if social_db is None:
+        return (_conditions.offline(
+            "This report was generated without a field observation store, so "
+            "no conditions can be read.").as_dict(), [], {})
+    try:
+        conn = _social_store.connect(social_db)
+    except sqlite3.Error:
+        return (_conditions.offline(
+            "The field observation store could not be opened.").as_dict(),
+            [], {})
+    try:
+        _field_obs.init(conn)
+        clim = _field_obs.load_climatology(conn)
+        if not clim:
+            return (_conditions.offline(
+                "No baseline has been sealed yet, so there is nothing to "
+                "compare a reading against.").as_dict(), [], {})
+        docs, _total = _field_obs.load_observations(
+            conn, climatology_id=clim.get("climatology_id"))
+        if not docs:
+            return (_conditions.offline(
+                "A baseline exists, but no observation has been filed against "
+                "it.").as_dict(), [], clim)
+    except sqlite3.Error:
+        return (_conditions.offline(
+            "The field observation store could not be read.").as_dict(),
+            [], {})
+    finally:
+        conn.close()
+
+    # `now` is what lets the instrument distinguish "the network went quiet"
+    # from "the station stopped reporting" — identical readings, opposite
+    # meanings. Without it a dead collector reads as weather.
+    cond = _conditions.assess(docs, clim, now=generated_at).as_dict()
+    cond["criteria_table"] = _conditions.criteria_table()
+    return cond, docs, clim
 
 
 def _load_social(conn, social_db, window_s: int | None = None) -> "_social_projection.SocialProjection":
@@ -998,7 +1457,10 @@ def generate_report(
 
     runs = [query.run_summary(conn, r) for r in run_ids]
     latest = max(runs, key=lambda r: r.started_at)
-    health_points = query.observation_window_health(conn, run_ids)
+    # Same budget as the metric series: the report asks for the whole
+    # observed interval on purpose and discloses what it got.
+    health_points = query.observation_window_health(
+        conn, run_ids, max_points=REPORT_MAX_WINDOWS)
     totals_series = query.total_events_series(
         conn, run_ids, max_points=REPORT_MAX_WINDOWS)
 
@@ -1014,12 +1476,16 @@ def generate_report(
     window_s = int(timeutil.parse_duration(social_window)) if social_window \
         else None
     social = _load_social(conn, social_db, window_s)
+    conditions, field_obs, field_clim = _load_conditions(
+        social_db, generated_at)
     freshness = _freshness(health_points, generated_at, latest.bucket_width)
     html_doc = _build_html(conn, run_ids, runs, latest, series_map,
                            totals_series, health_points, metric_totals,
-                           generated_at, public_url, social, freshness)
+                           generated_at, public_url, social, freshness,
+                           conditions, field_obs, field_clim)
     summary = _summary_json(runs, latest, series_map, totals_series,
-                            health_points, generated_at, freshness)
+                            health_points, generated_at, freshness,
+                            conditions)
 
     tmp = out_dir.parent / f".{out_dir.name}.tmp-{os.getpid()}"
     if tmp.exists():
@@ -1061,4 +1527,5 @@ def generate_report(
         "social_available": social.available,
         "social_sink_enabled": bool(
             (social.sink_receipt or {}).get("enabled")),
+        "conditions_state": (conditions or {}).get("state"),
     }

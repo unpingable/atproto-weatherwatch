@@ -506,8 +506,19 @@ def load(
             reason="no episode store; run `weatherwatch social detect`",
             source=src, sink_receipt=sink_receipt)
 
-    conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
-    conn.row_factory = sqlite3.Row
+    try:
+        conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+        conn.row_factory = sqlite3.Row
+    except sqlite3.Error as exc:
+        # The docstring above promises this never raises, and until now that
+        # was only true for the *missing* and *empty* cases. A truncated or
+        # non-database file at the configured path took the whole report
+        # generation down with it — so a corrupt episode store could stop the
+        # weather page from publishing at all.
+        return SocialProjection(
+            audience=audience, available=False,
+            reason=f"episode store could not be opened ({type(exc).__name__})",
+            source=src, sink_receipt=sink_receipt)
     try:
         tables = {r[0] for r in conn.execute(
             "SELECT name FROM sqlite_master WHERE type='table'")}
@@ -557,6 +568,13 @@ def load(
             # surface does not disclose suppressed or rare signatures.
             summary["n_detections"] = n_detections
             summary["n_superseded"] = n_detections - len(views)
+    except sqlite3.Error as exc:
+        # Same contract for a store that opens but cannot be read: unavailable
+        # with the reason, never an exception and never silence.
+        return SocialProjection(
+            audience=audience, available=False,
+            reason=f"episode store could not be read ({type(exc).__name__})",
+            source=src, sink_receipt=sink_receipt)
     finally:
         conn.close()
     proj = SocialProjection(

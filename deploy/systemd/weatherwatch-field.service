@@ -1,0 +1,47 @@
+[Unit]
+# Seal the social-weather field: one content-addressed observation per window,
+# scored against a climatology built from the same counters.
+#
+# Retains NOTHING new. The field is derived from the identity-free minute
+# counters the collector already writes, so this unit runs identically whether
+# or not edge custody is enabled, and it never touches the edge tables.
+#
+# This is the writer for the archive that the published page reads. Without it
+# the report renders "Station offline" -- correctly, and permanently.
+#
+# Deliberately NOT After=/Requires= the collector, for the same reason as
+# detection: sealing reads whatever has been committed and is correct on a
+# stale database, so a collector restart must never take it down.
+Description=Weatherwatch - seal social-weather field observations
+Documentation=file:/opt/weatherwatch/src/weatherwatch/social/field/README.md
+
+[Service]
+Type=oneshot
+User=weatherwatch
+Group=weatherwatch
+WorkingDirectory=/opt/weatherwatch
+Environment=PYTHONDONTWRITEBYTECODE=1
+# 30 days: the climatology conditions on hour of day and counts DAY replicates,
+# and `supported` needs at least 20 of them. A shorter range does not make the
+# instrument faster, it makes every quantity report `thin` and the public state
+# report "conditions unavailable" -- which is honest, and useless.
+#
+# Re-sealing the same windows is idempotent: an observation is content
+# addressed, so a second pass over an unchanged window rewrites an identical
+# row under an identical id.
+ExecStart=/opt/weatherwatch/.venv/bin/weatherwatch \
+    --db /var/lib/weatherwatch/weatherwatch.sqlite \
+    social field --last 30d \
+    --social-db /var/lib/weatherwatch/social.sqlite
+
+Nice=10
+IOSchedulingClass=idle
+ProtectSystem=strict
+ReadWritePaths=/var/lib/weatherwatch
+ProtectHome=true
+PrivateTmp=true
+NoNewPrivileges=true
+CapabilityBoundingSet=
+RestrictSUIDSGID=true
+StandardOutput=journal
+StandardError=journal

@@ -14,10 +14,18 @@ that must be adapted by an authorised operator.
 | component | posture |
 |---|---|
 | collector | one named Jetstream endpoint; local SQLite |
+| field sealer | one content-addressed observation per window; adds no retention |
 | report | static `index.html`, `summary.json`, and `social.json` |
 | publisher | render → privacy gate → atomic directory swap |
 | canonical site | <https://weatherwatch.neutral.zone/> |
 | crawling | `noindex, nofollow, noarchive` in HTML and web-tier header |
+
+The page opens with **current conditions** — an icon, a state word, a plain
+sentence, the measurements behind it beside the inferences they do not
+license, and a recent-conditions strip — over a folded "receipts" deck holding
+the observation status, primitive rates, ratios, observation health, social
+episodes and run history. The conditions are read from the sealed field
+archive; they are not computed at publish time.
 
 The former `/weatherwatch` path and `/beef` alias are redirects to the
 canonical host. Redirect configuration belongs to the serving environment;
@@ -27,7 +35,15 @@ configuration.
 ## Repository deployment artifacts
 
 - `deploy/systemd/weatherwatch-collector.service` supervises collection.
+- `deploy/systemd/weatherwatch-field.service` seals social-weather field
+  observations; `.timer` runs it hourly. It retains nothing new — the field is
+  derived from the identity-free minute counters the collector already writes
+  — and it renders no page. **Without it the published page reports
+  `Station offline`**, correctly and permanently, because the conditions block
+  reads the archive this unit writes.
 - `deploy/systemd/weatherwatch-publish.service` renders and publishes once.
+  It must be given `WW_SOCIAL_DB`; unset, both the social section and the
+  conditions block degrade to unavailable.
 - `deploy/systemd/weatherwatch-publish.timer` runs the publisher every five
   minutes.
 - `deploy/publish.sh` implements local or explicit remote publication.

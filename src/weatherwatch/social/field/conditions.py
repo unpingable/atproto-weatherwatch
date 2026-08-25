@@ -438,6 +438,18 @@ def assess(observations: list, clim: dict, now: str | None = None) -> Conditions
     )
 
 
+def offline(why: str) -> Conditions:
+    """`station_offline` with a caller-supplied reason.
+
+    The public wrapper exists because a caller that cannot even *reach* the
+    observations knows something `assess` does not -- "no field store is
+    configured for this report" and "the instrument filed no observations" are
+    different facts, and a station that cannot say which is not much of a
+    station. Behaviour is identical; only the sentence differs.
+    """
+    return _offline(why)
+
+
 def _offline(why: str) -> Conditions:
     """No measurement at all. Distinct from "cannot support a reading"."""
     return Conditions(

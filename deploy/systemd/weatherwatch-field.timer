@@ -1,0 +1,21 @@
+[Unit]
+Description=Weatherwatch - periodic social-weather field sealing
+Documentation=file:/opt/weatherwatch/src/weatherwatch/social/field/README.md
+
+[Timer]
+# Hourly, offset from the detection pass so the two oneshots do not contend
+# for the same SQLite file. Both are writers to social.sqlite; neither is
+# latency-critical, and an observation is a statement about a window that has
+# already closed.
+#
+# The published page reports the newest COMPLETE reading and says how old it
+# is, so an hourly cadence is visible to the reader rather than hidden: a
+# station that stops filing is reported as `station_offline` after
+# STALE_AFTER_WINDOWS, not quietly carried forward as weather.
+OnBootSec=14min
+OnUnitActiveSec=1h
+AccuracySec=1min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

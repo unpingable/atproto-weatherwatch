@@ -179,6 +179,57 @@ requires a deliberate flag and a deliberate path.
    mechanism-specific icon.
 4. Any detector built before its quantity's climatology is `supported`.
 5. Any map with a geographic reading, however abstract the projection.
-6. Removing the paired *not observed* column from a shown measurement.
+6. Removing the paired *not observed* column from a shown measurement, or
+   moving it behind a disclosure element the reader can collapse.
+7. Any forecast, projection, or trend arrow. The recent-conditions strip is
+   history; a page that predicts weather is making a claim about the future of
+   a public field, which is a different instrument entirely.
 
 Update this file before shipping any of them, not after.
+
+## 7. The conditions became the first screen of the canonical page
+
+**Decision: merged into the report, 2026-08-25. One builder, two consumers.**
+
+Until this point the instrument that answers *what is the network doing right
+now* existed, was disciplined, and was **not on the published page at all**.
+`weatherwatch.neutral.zone` opened with observation status: run history,
+ingest accounting, lag EWMA. A visitor met the instrument's paperwork before
+its reading, and the reading was on a page nothing published.
+
+The conditions block is now rendered at the top of the report, above a
+"receipts" deck holding the six lettered sections that were previously the
+whole page. Nothing was deleted; the sections fold.
+
+Three properties make this a presentation change rather than a semantic one:
+
+- **One builder.** `hero.render` is called by the report, by
+  `viz.render_public` and by `viz.render_station`. The duplicate renderer that
+  would otherwise drift is the same failure `criteria_table()` was introduced
+  to stop, one level up.
+- **The report reads, it does not compute.** Sealing a fortnight of minute
+  windows is seconds of work and the publisher runs every five minutes, so the
+  report loads sealed observations from the store. `weatherwatch social field`
+  is the writer, on its own timer (`weatherwatch-field.timer`). No new
+  retention: the field is derived from counters that already exist.
+- **Every failure is `station_offline` with the reason attached.** No store
+  configured, no baseline sealed, nothing filed against it, store unreadable —
+  each says which. None of them says Calm. This is the same rule as
+  *unavailable is not calm*, applied to the transport rather than to the
+  climatology.
+
+The two lanes stay separate and are reported separately: the aggregate
+ingest lane can be `current` while the field archive is `station_offline`,
+and the page says both. Averaging them into one "health" word would hide
+exactly the case the second state exists to name.
+
+**What did not change:** no threshold, no criterion, no climatology, no state
+vocabulary, no custody, no detector. The state a reader sees is the state
+`assess` returned, and the criteria table is still rendered verbatim.
+
+**Also under this decision:** the *recent conditions* strip is history and is
+derived by re-running the same `assess` over a prefix of the same
+observations. It cannot disagree with the headline about what a state means,
+and an interval with no eligible window reports **no observation** rather than
+carrying the previous reading forward. There is no forecast, and none should
+be added without re-justifying this section.

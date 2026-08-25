@@ -24,6 +24,10 @@ Environment=WW_PY=/opt/weatherwatch/.venv/bin/python
 # host is 3.10.)
 Environment=WW_CLI=/opt/weatherwatch/.venv/bin/weatherwatch
 Environment=WW_DB=/var/lib/weatherwatch/weatherwatch.sqlite
+# The episode store AND the sealed field archive. Unset, the report
+# renders the social section as unavailable and the conditions block as
+# "Station offline" -- both honestly, and both permanently.
+Environment=WW_SOCIAL_DB=/var/lib/weatherwatch/social.sqlite
 Environment=WW_BUILD=/var/lib/weatherwatch/build/report
 Environment=WW_TARGET=/var/www/weatherwatch
 Environment=WW_PUBLIC_URL=https://weatherwatch.neutral.zone/

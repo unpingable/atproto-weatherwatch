@@ -30,6 +30,10 @@ BAND_MEANING = {
     "critical": "11x and above",
 }
 
+#: Section title. Owned here because the prose it heads is owned here, but
+#: rendered by the report, which decides where in the page it sits.
+TITLE = "E \u00b7 Social observations \u2014 disclosure-limited episodes"
+
 MAX_TABLE_ROWS = 250
 
 
@@ -120,8 +124,7 @@ def render(proj: SocialProjection, floor: float | None = None) -> str:
             f'{_esc(proj.summary["first_period"])}</strong> to <strong>'
             f'{_esc(proj.summary["last_period"])}</strong>.'
         )
-    head = f"""<h2>E · Social observations — disclosure-limited episodes</h2>
-<p class="sub">These are coarse periods in which an aggregate event rate
+    head = f"""<p class="sub">These are coarse periods in which an aggregate event rate
 departed from its own trailing baseline. No account identifier is published.
 That alone is <strong>not anonymity</strong>: precise aggregate timing and
 counts can be joined back to the public firehose. Publication therefore fails

@@ -31,8 +31,12 @@ import datetime
 import html
 import math
 
+from . import hero
+
 STYLE = """
-:root{--bg:#f7f7f8;--panel:#fff;--ink:#16181d;--muted:#6a7080;--rule:#e2e4ea;
+:root{--font-sans:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+--font-mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+--bg:#f7f7f8;--panel:#fff;--ink:#16181d;--muted:#6a7080;--rule:#e2e4ea;
 --accent:#3b6ea5;--grid:#e8eaf0;--cloud:#8aa0b8;--mark:#c0632c;
 --q1:#3b6ea5;--q2:#4a7f5c;--q3:#c99a3a;--q4:#7b4fa0;--cool:#5a7f9c;}
 @media (prefers-color-scheme:dark){:root{--bg:#0e1014;--panel:#161920;
@@ -40,14 +44,18 @@ STYLE = """
 --cloud:#5c708a;--mark:#e08a4a;--q1:#7fb2e5;--q2:#6fbf8a;
 --q3:#e0b45a;--q4:#b48ad8;--cool:#7fa9cc;}}
 *{box-sizing:border-box}
-body{margin:0;padding:24px;background:var(--bg);color:var(--ink);
-font:14px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+/* Prose in the reader's UI face, machine text in mono. Same split as the
+   canonical report, so the two surfaces read as one instrument. */
+body{margin:0;padding:26px 24px 40px;background:var(--bg);color:var(--ink);
+font:15px/1.6 var(--font-sans);-webkit-font-smoothing:antialiased;
 overflow-wrap:anywhere}
-.wrap{max-width:1180px;margin:0 auto}
-h1{font-size:20px;margin:0 0 2px;letter-spacing:.02em}
-h2{font-size:13px;text-transform:uppercase;letter-spacing:.09em;
-color:var(--muted);margin:26px 0 10px;font-weight:600}
-.sub{color:var(--muted);margin:0 0 16px;font-size:12.5px}
+.wrap{max-width:1120px;margin:0 auto}
+h1{font-size:26px;margin:0 0 3px;letter-spacing:-.015em;font-weight:680}
+h2{font-size:11.5px;text-transform:uppercase;letter-spacing:.11em;
+color:var(--muted);margin:28px 0 10px;font-weight:700}
+.sub{color:var(--muted);margin:0 0 16px;font-size:13px;max-width:78ch}
+code,.num,td.num,.metric-val{font-family:var(--font-mono);
+font-variant-numeric:tabular-nums}
 .panel{background:var(--panel);border:1px solid var(--rule);border-radius:8px;
 padding:14px 16px;margin-bottom:12px}
 .grid{display:grid;gap:12px}
@@ -70,43 +78,12 @@ border:1px solid currentColor;white-space:nowrap}
 .sup-supported{color:var(--q2)}.sup-thin{color:var(--q3)}
 .sup-unsupported{color:var(--muted)}
 .scroll{overflow-x:auto}
-.hero{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:20px;
-align-items:center}
-@media (max-width:720px){.hero{grid-template-columns:1fr}}
-.state{font-size:34px;font-weight:600;letter-spacing:.01em;margin:0 0 4px}
-.state .ico{font-size:30px;margin-right:10px;
-font-family:"Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",sans-serif}
-.state-sentence{font-size:15px;margin:0 0 8px;color:var(--ink)}
-.nobs{font-size:12.5px;color:var(--muted);margin:10px 0 0;
-border-left:3px solid var(--muted);padding-left:11px}
-.state-plain{font-size:15px;line-height:1.55;margin:0 0 10px}
-.st-calm{color:var(--q2)}.st-active{color:var(--cool)}
-.st-turbulent{color:var(--q3)}.st-storm{color:var(--mark)}
-.st-severe_storm{color:#c0392b}
-@media (prefers-color-scheme:dark){.st-severe_storm{color:#ef6a5a}}
-.st-unavailable{color:var(--muted)}
-details{margin:10px 0 0}
-details>summary{cursor:pointer;color:var(--accent);font-size:13px;
-padding:6px 0;list-style:revert}
-.why li{margin:6px 0}
-.why{padding-left:18px;margin:6px 0}
-.cant li{margin:5px 0;color:var(--muted)}
-.cant{padding-left:18px;margin:6px 0;font-size:12px}
-.crit td{font-size:12px}
-.conf{font-size:12px;color:var(--muted);margin-top:8px}
-.obs{display:grid;grid-template-columns:1fr 1fr;gap:0}
-@media (max-width:720px){.obs{grid-template-columns:1fr}}
-.obs>div{padding:10px 14px;border-top:1px solid var(--rule)}
-.obs .hd{font-size:10.5px;text-transform:uppercase;letter-spacing:.07em;
-color:var(--muted);border-top:0;padding-bottom:4px;font-weight:600}
-.obs .yes{border-left:3px solid var(--q2)}
-.obs .no{border-left:3px solid var(--muted);color:var(--muted)}
 .calib{border-left:3px solid var(--q3);padding:10px 14px;margin:0 0 14px;
 background:var(--panel);font-size:12.5px}
 code{font-size:11.5px;color:var(--muted)}
 footer{margin-top:30px;padding-top:14px;border-top:1px solid var(--rule);
 color:var(--muted);font-size:11.5px}
-"""
+""" + hero.STYLE
 
 PANEL_QUANTITIES = ("interaction_velocity", "emission_velocity",
                     "interaction_pressure", "boundary_share")
@@ -412,165 +389,6 @@ def _panel_portrait(obs: list, clim: dict, width=1080, height=340) -> str:
 
 # --- hero: state and diurnal radar -----------------------------------------
 
-def _radar(obs: list, clim: dict, size=360) -> str:
-    """Diurnal radar. Angle is hour of day; radius is ratio to that hour's
-    typical level. Both axes are quantities the data actually has.
-
-    The grey annulus is the usual range for each hour (p25-p75 as a ratio to
-    that hour's median), so it wobbles with the daily cycle rather than being
-    a circle. The trace is the last 24 hours. A bulge past the outer ring is a
-    stretch of time that did not look like that time of day usually looks.
-    """
-    name = "interaction_velocity"
-    q = clim.get("quantities", {}).get(name, {})
-    cells = {c["hour"]: c for c in q.get("diurnal", [])}
-    if not cells:
-        return ""
-
-    cx = cy = size / 2
-    r_max = size / 2 - 34
-
-    #: Radius is LOGARITHMIC in the ratio, with "typical" at mid-radius.
-    #:
-    #: A linear scale capped at 5x squashes the entire interesting region --
-    #: roughly 0.8x to 1.3x -- into a disc a few pixels across, and the usual
-    #: range becomes an invisible dot. Log spacing gives quiet conditions
-    #: somewhere to go (inward) as well as busy ones (outward), which matters
-    #: for an instrument that reports lulls as readily as storms.
-    LO, HI = 0.25, 8.0
-    log_lo, log_hi = math.log2(LO), math.log2(HI)
-
-    def radius(ratio: float) -> float:
-        r = min(max(ratio, LO), HI)
-        return (math.log2(r) - log_lo) / (log_hi - log_lo) * r_max
-
-    def xy(hour: float, ratio: float):
-        rr = radius(ratio)
-        ang = (hour / 24.0) * 2 * math.pi - math.pi / 2
-        return cx + rr * math.cos(ang), cy + rr * math.sin(ang)
-
-    parts = [f'<svg viewBox="0 0 {size} {size}" width="{size}" '
-             f'height="{size}" role="img" aria-label="conditions by hour of '
-             f'day relative to typical">']
-    for ratio, label in ((0.5, "half"), (1.0, "typical"), (2.0, "2x"),
-                         (4.0, "4x"), (8.0, "8x+")):
-        rr = radius(ratio)
-        typical = ratio == 1.0
-        stroke = "var(--cool)" if typical else "var(--grid)"
-        dash = "" if typical else ' stroke-dasharray="2 3"'
-        parts.append(f'<circle cx="{cx}" cy="{cy}" r="{rr:.1f}" fill="none" '
-                     f'stroke="{stroke}"{dash}/>')
-        parts.append(f'<text x="{cx + 7}" y="{cy - rr - 2:.1f}" font-size="8" '
-                     f'fill="var(--muted)">{label}</text>')
-    for h in range(0, 24, 6):
-        x, y = xy(h, HI)
-        parts.append(f'<line x1="{cx}" y1="{cy}" x2="{x:.1f}" y2="{y:.1f}" '
-                     f'stroke="var(--grid)"/>')
-        # Outside the plot, computed directly: routing this through xy() sent
-        # it through the ratio clamp, which pinned every hour label onto the
-        # outer ring where it collided with the ring labels.
-        ang = (h / 24.0) * 2 * math.pi - math.pi / 2
-        lx = cx + (r_max + 15) * math.cos(ang)
-        ly = cy + (r_max + 15) * math.sin(ang) + 3
-        parts.append(f'<text x="{lx:.1f}" y="{ly:.1f}" font-size="8.5" '
-                     f'text-anchor="middle" fill="var(--muted)">'
-                     f'{h:02d}h</text>')
-
-    band = []
-    for h in range(25):
-        c = cells.get(h % 24, {})
-        med, p75 = c.get("p50"), c.get("p75")
-        band.append(xy(h, (p75 / med) if med and p75 else 1.0))
-    for h in range(24, -1, -1):
-        c = cells.get(h % 24, {})
-        med, p25 = c.get("p50"), c.get("p25")
-        band.append(xy(h, (p25 / med) if med and p25 else 1.0))
-    pts = " ".join(f"{x:.1f},{y:.1f}" for x, y in band)
-    parts.append(f'<polygon points="{pts}" fill="var(--cloud)" '
-                 f'opacity="0.42" stroke="var(--cloud)" stroke-width="0.8" '
-                 f'stroke-opacity="0.8"/>')
-
-    recent = obs[-24:]
-    trace = []
-    clamped = []
-    for o in recent:
-        h = _hour(o["ts_start"])
-        v = o["metrics"].get(name)
-        if h is None or v is None:
-            continue
-        med = (cells.get(h) or {}).get("p50")
-        if not med:
-            continue
-        ratio = v / med
-        pt = xy(h, ratio)
-        trace.append(pt)
-        if ratio > HI:
-            clamped.append((pt[0], pt[1], ratio))
-    if len(trace) >= 2:
-        tp = " ".join(f"{x:.1f},{y:.1f}" for x, y in trace)
-        parts.append(f'<polyline points="{tp}" fill="none" '
-                     f'stroke="var(--q1)" stroke-width="1.8" '
-                     f'stroke-linejoin="round"/>')
-    if trace:
-        x, y = trace[-1]
-        parts.append(f'<circle cx="{x:.1f}" cy="{y:.1f}" r="4" '
-                     f'fill="var(--mark)"><title>most recent window</title>'
-                     f'</circle>')
-    for x, y, ratio in clamped:
-        parts.append(f'<circle cx="{x:.1f}" cy="{y:.1f}" r="5.5" fill="none" '
-                     f'stroke="var(--mark)" stroke-width="1" '
-                     f'stroke-dasharray="2 2"><title>{ratio:.1f}x typical — '
-                     f'beyond the outer ring</title></circle>')
-    parts.append("</svg>")
-    return "".join(parts)
-
-
-def _panel_hero(cond: dict, obs: list, clim: dict) -> str:
-    state = cond.get("state", "unavailable")
-    cant = "".join(f"<li>{_esc(c)}</li>" for c in cond.get("cannot_see", []))
-    # `conditions.criteria_table()` is the only builder; the row shape is
-    # (icon, label, text) everywhere, so this renderer has one case.
-    crit = "".join(
-        f'<tr><td style="white-space:nowrap"><span class="ico" '
-        f'role="img" aria-hidden="true">{_esc(icon)}</span> '
-        f'{_esc(label)}</td><td>{_esc(text)}</td></tr>'
-        for icon, label, text in cond.get("criteria_table", [])
-    )
-    return f"""<div class="panel"><div class="hero">
-<div>
-<p class="state st-{_esc(state)}"><span class="ico" role="img"
-aria-hidden="true">{_esc(cond.get("icon", ""))}</span>{_esc(cond.get("headline", ""))}</p>
-<p class="state-sentence">{_esc(cond.get("sentence", ""))}</p>
-<p class="state-plain">{_esc(cond.get("plain", ""))}</p>
-<p class="nobs"><strong>Not observed:</strong>
-{_esc(cond.get("universal_not_observed", ""))}.</p>
-<p class="conf">{_esc(cond.get("confidence_plain", ""))}</p>
-<p class="conf">Conditions as of {_esc(cond.get("as_of", "—"))}.</p>
-</div>
-<div>{_radar(obs, clim)}
-<p class="note" style="max-width:20em;text-align:center;margin:2px auto 0">
-Last 24 hours. Angle is hour of day; distance from centre is activity against
-what that hour usually looks like. Shaded band = usual range.</p></div>
-</div>
-
-<details open><summary>Why these conditions?</summary>
-{_pairs_table(cond)}
-<p class="note">Rule applied: {_esc(cond.get("criteria", ""))}</p>
-<p class="note" style="margin-top:10px"><strong>What this instrument cannot
-see</strong>, in case you were about to assume otherwise:</p>
-<ul class="cant">{cant}</ul>
-</details>
-
-<details><summary>How conditions are decided</summary>
-<div class="scroll"><table class="crit">
-<tr><th>state</th><th>issued when</th></tr>{crit}</table></div>
-<p class="note">These criteria are published so the label can be checked
-rather than trusted. A state is a statement about measured interaction
-conditions — never about a person, a group, or anyone's intent.</p>
-</details>
-</div>"""
-
-
 # --- page ------------------------------------------------------------------
 
 def _truncation(meta: dict, shown: int) -> str:
@@ -580,24 +398,6 @@ def _truncation(meta: dict, shown: int) -> str:
         return ""
     return (f" (most recent of {total:,} in the archive; "
             f"{total - shown:,} older not drawn)")
-
-
-def _pairs_table(cond: dict) -> str:
-    """Two columns: what was measured, and what it does not license.
-
-    Not a disclaimer block, and not a second panel further down the page. A
-    reader given "interaction activity is 4.6x typical" supplies "people must
-    be angry" themselves unless the instrument says otherwise in the same
-    breath, so the limit sits in the same row as the measurement.
-    """
-    pairs = cond.get("pairings", [])
-    if not pairs:
-        return '<p class="note">No comparison was possible.</p>'
-    rows = ['<div class="hd">Observed</div><div class="hd">Not observed</div>']
-    for p in pairs:
-        rows.append(f'<div class="yes">{_esc(p["observed"])}</div>'
-                    f'<div class="no">{_esc(p["not_observed"])}</div>')
-    return f'<div class="obs">{"".join(rows)}</div>'
 
 
 def render_public(observations: list, climatology: dict, meta: dict,
@@ -615,6 +415,7 @@ def render_public(observations: list, climatology: dict, meta: dict,
     obs = sorted(observations, key=lambda o: o["ts_start"])
     clim = climatology or {}
     cond = conditions or {}
+    history = hero.recent_states(obs, clim)
 
     return f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
@@ -630,7 +431,9 @@ data rather than a policy on top of it: every figure here comes from aggregate
 counters that never contained an actor, a target, a record body or a
 location.</p>
 
-{_panel_hero(cond, obs, clim)}
+{hero.render(cond, obs, clim, history=history,
+              generated_at=meta.get("generated_at", ""),
+              heading="Current conditions")}
 
 <footer>
 {_esc(meta.get("generated_at", ""))} ·
@@ -707,6 +510,9 @@ same measurement in the same hour of day, and where the history is too short
 to support that, the panel says <em>unsupported</em> instead of guessing.
 {_esc(how_note)}</p>
 {calib}
+
+{hero.render(cond, obs, clim, history=hero.recent_states(obs, clim),
+              generated_at=meta.get("generated_at", ""))}
 
 <h2>A · Conditions</h2>
 {_panel_conditions(obs, clim)}
