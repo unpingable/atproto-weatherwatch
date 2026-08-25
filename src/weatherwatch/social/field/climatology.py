@@ -29,6 +29,7 @@ from __future__ import annotations
 import datetime
 import math
 from dataclasses import asdict, dataclass, field
+from functools import cached_property
 
 from ..envelope import receipt_hash
 from . import FIELD_SCHEMA_VERSION
@@ -201,8 +202,20 @@ class Climatology:
     quantities: dict
     provenance: dict = field(default_factory=dict)
 
-    @property
+    @cached_property
     def climatology_id(self) -> str:
+        """Content address of the whole baseline. Computed once per instance.
+
+        `observe()` stamps this id onto every observation, so a naive property
+        re-canonicalised and re-hashed the entire climatology once per window:
+        sealing a fortnight of minute windows spent 69 of 71 seconds hashing
+        the same immutable object 20,000 times. A `Climatology` is a frozen
+        dataclass built once and never mutated, so the second answer can only
+        ever equal the first.
+
+        `cached_property` writes through to `__dict__` rather than through
+        `__setattr__`, which is what lets it work on a frozen dataclass at all.
+        """
         return receipt_hash(self.as_dict(include_id=False))
 
     def as_dict(self, include_id: bool = True) -> dict:
