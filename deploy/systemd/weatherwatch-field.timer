@@ -23,10 +23,20 @@ Documentation=file:/opt/weatherwatch/src/weatherwatch/social/field/README.md
 # windows: ~21 s, almost all of it re-fitting the climatology and reading the
 # existing documents back to compare.
 #
-# Offset from the detection pass so the two oneshots do not contend for the
-# same SQLite file, and `AccuracySec` keeps systemd from coalescing them.
-OnBootSec=3min
-OnUnitActiveSec=5min
+# A wall-clock schedule, not `OnBootSec`+`OnUnitActiveSec`.
+#
+# That pair chains: each activation schedules the next, and the boot deadline
+# is the seed. On a host up 173 days the boot deadline is long past, so a timer
+# that is ever stopped and restarted comes back *enabled and active with no
+# next elapse at all* — observed here, after the unit was disabled for four
+# hours. A producer whose freshness guarantee depends on an unbroken activation
+# chain is one `systemctl stop` away from silently never running again.
+#
+# `OnCalendar` is absolute: it recovers from any stop, restart or clock change,
+# and the 30-second phase keeps it off the minute boundary the publish timer
+# and everything else on this host cluster around, so the two oneshots do not
+# contend for the same SQLite file.
+OnCalendar=*:0/5:30
 AccuracySec=15s
 Persistent=true
 

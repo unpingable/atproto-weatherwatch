@@ -793,16 +793,22 @@ def test_the_publisher_is_given_the_store_the_page_reads():
     assert "WW_SOCIAL_DB=/var/lib/weatherwatch/social.sqlite" in env
 
 
-def test_the_field_and_detect_timers_do_not_fire_together():
-    """Both are writers to one SQLite file; they are offset, not coincident."""
-    import re as _re
-    starts = {}
-    for name in ("weatherwatch-field.timer", "weatherwatch-social-detect.timer"):
-        text = _unit(name)
-        m = _re.search(r"OnBootSec=(\d+)min", text)
-        assert m, f"{name} has no OnBootSec"
-        starts[name] = int(m.group(1))
-    assert len(set(starts.values())) == 2, f"timers collide: {starts}"
+def test_the_field_timer_cannot_be_orphaned_by_a_restart():
+    """`OnBootSec`+`OnUnitActiveSec` chains from a boot deadline.
+
+    On a long-uptime host that deadline is in the past, so a timer that is ever
+    stopped comes back enabled, active, and with no next elapse — observed on
+    the live host after the unit had been disabled for four hours. A freshness
+    guarantee must not depend on an unbroken activation chain.
+    """
+    # Directives only. Matching raw text caught the word inside the comment
+    # that explains why the directive is absent — the same way an earlier test
+    # matched "The receipts" inside a stylesheet comment.
+    d = _directives(_unit("weatherwatch-field.timer"))
+    assert d.get("OnCalendar"), "the field timer must use a wall-clock schedule"
+    assert "OnUnitActiveSec" not in d, (
+        "an activation chain can be broken by a single stop")
+    assert d.get("Persistent") == ["true"]
 
 
 def test_the_field_cadence_satisfies_the_freshness_rule_it_publishes():
@@ -816,10 +822,10 @@ def test_the_field_cadence_satisfies_the_freshness_rule_it_publishes():
     import re as _re
     from weatherwatch.social.field import conditions as cond_mod
 
-    text = _unit("weatherwatch-field.timer")
-    m = _re.search(r"OnUnitActiveSec=(\d+)(min|h)", text)
-    assert m, "the field timer has no repeat interval"
-    period_s = int(m.group(1)) * (3600 if m.group(2) == "h" else 60)
+    schedule = _directives(_unit("weatherwatch-field.timer"))["OnCalendar"][0]
+    m = _re.match(r"\*:0/(\d+)", schedule)
+    assert m, f"unrecognised field schedule: {schedule}"
+    period_s = int(m.group(1)) * 60
 
     # The deployed window width; the collector unit is the authority on it.
     collector = _unit("weatherwatch-collector.service")
