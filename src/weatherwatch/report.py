@@ -270,7 +270,7 @@ h3 { font-size:15px; margin:0 0 6px; font-weight:650; }
   .scope { font-size:12.5px; line-height:1.5; padding:10px 12px; }
   .mast { padding-bottom:9px; margin-bottom:12px; }
   .mast-grid { gap:14px; }
-  .station .note { font-size:11.5px; }
+
 }
 /* Machine text and figures. Everything else is prose. */
 .mono, code, .kv dd, td.num, .metric-val, .ratio-expression {
@@ -302,7 +302,19 @@ td .pill { min-width:5.6em; text-align:center; }
 /* Dense tables get a LOCAL horizontal scroller. The min-width keeps columns
    legible and makes the scroller actually engage, instead of the table
    squeezing itself into unreadable slivers or shoving the page sideways. */
-.scroll { overflow-x:auto; }
+/* A local scroller a thumb can find. `local` gradients scroll with the
+   content and `scroll` ones stay put, so the shadow appears only on the side
+   that actually has more table — six of these were on the page at 375px with
+   nothing indicating any of them moved. */
+.scroll {
+  overflow-x:auto;
+  background:
+    linear-gradient(to right, var(--panel) 30%, transparent) left center/28px 100% no-repeat local,
+    linear-gradient(to left, var(--panel) 30%, transparent) right center/28px 100% no-repeat local,
+    radial-gradient(farthest-side at 0 50%, rgba(0,0,0,.22), transparent) left center/12px 100% no-repeat scroll,
+    radial-gradient(farthest-side at 100% 50%, rgba(0,0,0,.22), transparent) right center/12px 100% no-repeat scroll;
+  overscroll-behavior-x:contain;
+}
 .scroll table { min-width:32rem; }
 .scroll.wide table { min-width:46rem; }
 /* Four ratio expressions across, each `white-space:nowrap` by design so a
@@ -311,6 +323,25 @@ td .pill { min-width:5.6em; text-align:center; }
    `overflow-wrap:anywhere` shredded the word "ratio" down one character per
    line. They get the full width and a real local scroller instead. */
 .scroll.wider table { min-width:70rem; }
+/* Below this the ratio table is 1782px against a 313px viewport — a scroller
+   is an affordance, not an excuse for a five-screen-wide table. Stack each
+   row into a block and label the cells from the header, which keeps every
+   numerator physically attached to its denominator (the one thing the ratio
+   presentation must never lose) while removing the width entirely. */
+@media (max-width:700px) {
+  .scroll.wider.stackable, .scroll.wider.stackable table { min-width:0; }
+  .scroll.stackable thead { position:absolute; width:1px; height:1px;
+                     overflow:hidden; clip:rect(0 0 0 0); white-space:nowrap; }
+  .scroll.stackable tr { display:block; padding:9px 0;
+                  border-bottom:1px solid var(--rule); }
+  .scroll.stackable td { display:grid; grid-template-columns:9.5em 1fr; gap:10px;
+                  border:0; padding:3px 0; white-space:normal; }
+  .scroll.stackable td::before { content:attr(data-label); color:var(--muted);
+                          font-size:11.5px; text-transform:uppercase;
+                          letter-spacing:.06em; font-family:var(--font-sans); }
+  .scroll.stackable td.num { text-align:left; }
+  .scroll.stackable .ratio-expression { white-space:normal; }
+}
 /* The label column has to be allowed to keep its word. Its siblings are
    `white-space:nowrap` by design, so they claim their full intrinsic width
    first and the label is left with whatever remains — and `overflow-wrap:
@@ -388,6 +419,42 @@ a:focus-visible, summary:focus-visible, details:focus-visible {
              opacity:.5; font-weight:650; }
 .freshness { margin:12px 0 18px; border-left:4px solid var(--accent); }
 .freshness strong { text-transform:uppercase; letter-spacing:.05em; }
+
+/* --- narrow viewports --------------------------------------------------
+   Last in the sheet on purpose. An earlier version of this block sat above
+   the station-bar and receipts rules it was trying to override, so at equal
+   specificity the desktop values won and the type floor, the touch targets
+   and the table stacking all silently did nothing while measuring as applied.
+   Everything here is a measured failure at 320-430px, not a general pass. */
+@media (max-width:560px) {
+  /* Type floor: 71 elements measured under 12.5px, three of them at 10px.
+     Small uppercase labels are the worst offenders, because the tracking
+     makes them look larger than they read. */
+  .note, .station .note { font-size:12px; }
+  .station .k { font-size:11.5px; }
+  .wx-pairs .hd, .wx-hist .t { font-size:11.5px; }
+  th { font-size:11.5px; }
+  .metric-name { font-size:12.5px; }
+  .metric-unit { font-size:11.5px; }
+  .kv { font-size:13px; }
+  .kv dd { font-size:12.5px; }
+  .legend { font-size:12px; }
+  footer { font-size:12px; }
+  details.rc > summary .hint { font-size:12px; }
+
+  /* Two primitive cards per row rather than one: the 232px floor collapsed
+     to a single column and made section B most of the page's height. A
+     sparkline is still legible at ~150px. */
+  /* 165px, not 150: two cards fit at 375px and above, and at 320px it falls
+     back to one rather than squeezing two into 145px each, where the labels
+     wrap enough to make the section TALLER than the single column it
+     replaced. Measured both ways. */
+  .g3 { grid-template-columns:repeat(auto-fit,minmax(min(165px,100%),1fr)); }
+
+  /* 44px touch targets. The receipts summaries measured 33px. */
+  details.rc > summary { padding:13px 15px; min-height:44px;
+                         align-items:center; }
+}
 """ + _hero.STYLE + _social_section.STYLE_ADDITION
 
 HATCH_DEF = """
@@ -1018,13 +1085,15 @@ def _section_conditions(conn, run_ids, series_map, totals_series) -> str:
                 f'<strong>{_fmt(value, 4)}</strong></span>'
             )
 
+        # `data-label` is what lets the row stack into a labelled block on a
+        # narrow screen without a second markup path; on desktop it is inert.
         rows.append(
-            f"<tr><td>{_esc(label)}</td>"
-            f"<td>{expression(a.total, b.total, overall)}</td>"
-            f"<td>{expression(low.numerator, low.denominator, low.value) if low else '—'}</td>"
-            f"<td>{expression(high.numerator, high.denominator, high.value) if high else '—'}</td>"
-            f"<td class='num'>{len(eligible)}</td>"
-            f"<td class='num'>{thin or ''}</td></tr>"
+            f"<tr><td data-label='ratio'>{_esc(label)}</td>"
+            f"<td data-label='overall'>{expression(a.total, b.total, overall)}</td>"
+            f"<td data-label='min window'>{expression(low.numerator, low.denominator, low.value) if low else '—'}</td>"
+            f"<td data-label='max window'>{expression(high.numerator, high.denominator, high.value) if high else '—'}</td>"
+            f"<td class='num' data-label='windows scored'>{len(eligible)}</td>"
+            f"<td class='num' data-label='windows too thin'>{thin or ''}</td></tr>"
         )
 
     dep_rows = []
@@ -1061,7 +1130,7 @@ def _section_conditions(conn, run_ids, series_map, totals_series) -> str:
 
     return f"""<div class="panel" style="margin-bottom:12px">{total_line}</div>
 <div class="grid">
-  <div class="panel scroll wider">
+  <div class="panel scroll wider stackable">
     <table><thead><tr><th>ratio</th><th>overall: numerator / denominator = ratio</th>
     <th>min window: numerator / denominator = ratio</th>
     <th>max window: numerator / denominator = ratio</th>

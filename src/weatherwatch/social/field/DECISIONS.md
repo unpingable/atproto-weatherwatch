@@ -233,3 +233,99 @@ observations. It cannot disagree with the headline about what a state means,
 and an interval with no eligible window reports **no observation** rather than
 carrying the previous reading forward. There is no forecast, and none should
 be added without re-justifying this section.
+
+## 8. Identity, idempotence, and the cadence that makes freshness true
+
+**Decision: identity is the fitted baseline; the extent is evidence.**
+Repaired 2026-08-25 after a measured production incident.
+
+### What broke
+
+The sealer re-fits its climatology over a *trailing* range, so `ts_start` and
+`ts_end` move on every run by construction. `climatology_id` hashed over them;
+`observe()` stamps that id onto every observation; the observation hashed over
+that. So one hourly reseal minted 43,201 logically identical observations under
+fresh identities — about **175 MB per run**, taking the live store from 474 MB
+to 827 MB in two runs, roughly **4 GB a day** of duplicate epistemology.
+
+It was fixed at the identity layer and **not** with retention. A producer that
+manufactures logical duplicates is broken whether or not something downstream
+deletes them efficiently; retention is an orthogonal policy and is owned
+elsewhere.
+
+### What constitutes identity now
+
+**A climatology is its fitted baseline.** In the hash: schema version, window
+width, the distributions themselves (percentiles, spread, support), and the
+observer they came from. Two runs that fit the same numbers are the same
+baseline whatever slice of wall clock produced them; a run whose percentiles
+genuinely moved is a different baseline and gets a different id.
+
+Excluded — `climatology.EXTENT_FIELDS` — and still present in the document:
+`ts_start`, `ts_end`, `n_windows`, `n_observed`, `n_eligible`, `n_days`,
+`n_weeks`, `hour_of_week_supported`, `hour_of_week_note`, and
+`provenance.run_ids`. A reader still learns exactly which interval was fitted
+and over how many day replicates. It simply does not fork the address.
+
+**An observation is what was observed.** In the hash: the schema, the window
+and its bounds, the metrics, what could not be measured and why, the window's
+*own* observation quality (`coverage`, `eligible`, `quality` — a window
+re-observed differently is a different observation), the observer, the
+non-claims, and `structural_absences`. That last remains load-bearing: you
+still cannot strip the statement of what this instrument cannot see and keep
+the same identity.
+
+Excluded — `observation.CONFIDENCE_EVIDENCE_KEYS` and
+`PROVENANCE_EVIDENCE_KEYS` — and still present in the document:
+`baseline_days`, `baseline_n_eff`, `support`, `note`, `run_ids`,
+`climatology_id`, `climatology_days`, `hour_of_week_supported`. Re-scoring an
+unchanged window against a fresher baseline does not make it a different
+observation of the network; it makes it the same observation carrying newer
+evidence.
+
+`identity_document()` is a single builder used both to mint an id and to replay
+one. Two ways to compute one identity is two identities.
+
+### Idempotence, measured
+
+On 30 days of minute windows (43,200 observations):
+
+| | rows added | bytes added |
+|---|---|---|
+| first seal | 43,200 | 181 MB |
+| reseal, no new data | **0** | **0** |
+| advance one window | **1** | one row |
+
+`save_observations` additionally writes only rows whose document actually
+changed, and returns `{considered, written, unchanged}`. On a healthy reseal
+`written` is the number of windows that arrived. **If `written` ever equals
+`considered` over an unchanged range, the archive is forking again.**
+
+`sealed_at` is deliberately not refreshed on an unchanged row: it records when
+an observation was sealed, not when it was last re-confirmed.
+
+### Freshness and producer cadence
+
+`STALE_AFTER_WINDOWS` is 15 and the deployed window is 60 s, so a reading older
+than 15 minutes is reported as `station_offline` — correctly, because that is
+what the published criteria table says.
+
+The sealer ran **hourly**, so the public page truthfully reported the station
+offline for roughly 45 minutes in every 60. The rule was right and the cadence
+was wrong. **The producer is aligned to the declared semantics rather than
+freshness being redefined around a cron entry**: the timer now runs every 5
+minutes, giving a worst-case reading age of about 5.5 minutes against a
+15-minute budget, so two consecutive runs can fail before a reader is told the
+station is offline. `tests/test_report.py` pins that relationship so neither
+side can drift away from the other.
+
+This is affordable only because sealing became idempotent: a steady-state run
+adds no rows and no bytes, and costs about 21 s, almost all of it re-fitting
+the climatology and reading existing documents back to compare.
+
+### Legacy rows
+
+Observations sealed under the old identity semantics remain in the store and
+are superseded rather than migrated. Cleaning them up is a retention decision
+and belongs to whoever owns storage policy; nothing here deletes, prunes or
+vacuums anything.

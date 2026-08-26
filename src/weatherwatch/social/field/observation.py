@@ -70,6 +70,51 @@ class Confidence:
     note: str = ""
 
 
+#: What an observation's identity is NOT — the baseline-derived half.
+#:
+#: `coverage`, `eligible` and `quality` describe the *window*: how much of it
+#: was watched and how cleanly. They stay in the identity, because a window
+#: re-observed differently is a different observation.
+#:
+#: These four describe the *baseline it happened to be compared against* at
+#: seal time. Re-scoring an unchanged window against a fresher climatology
+#: does not make it a different observation of the network; it makes it the
+#: same observation with newer evidence attached.
+CONFIDENCE_EVIDENCE_KEYS = ("baseline_days", "baseline_n_eff", "support", "note")
+
+#: Same argument, provenance side. `climatology_id` in particular is why one
+#: reseal used to mint an entire second copy of the archive.
+PROVENANCE_EVIDENCE_KEYS = (
+    "run_ids", "climatology_id", "climatology_days", "hour_of_week_supported",
+)
+
+
+def identity_document(document: dict) -> dict:
+    """Project a stored observation document onto the fields that identify it.
+
+    One builder, two callers — `observation_id` here and `replay_observation`
+    in `run.py` — because an identity computed two ways is two identities. The
+    same reason `criteria_table()` exists one level up.
+
+    What survives: the schema, the window and its bounds, what was measured,
+    what could not be measured and why, the window's own observation quality,
+    the observer, and the statement of structural absences. That last one is
+    deliberate and is load-bearing: you cannot strip the record of what this
+    instrument cannot see and keep the same identity.
+
+    What is dropped is baseline evidence, which slides on every reseal by
+    construction and which the document still carries in full.
+    """
+    out = {k: v for k, v in document.items() if k != "observation_id"}
+    confidence = {k: v for k, v in (out.get("confidence") or {}).items()
+                  if k not in CONFIDENCE_EVIDENCE_KEYS}
+    out["confidence"] = confidence
+    provenance = {k: v for k, v in (out.get("provenance") or {}).items()
+                  if k not in PROVENANCE_EVIDENCE_KEYS}
+    out["provenance"] = provenance
+    return out
+
+
 @dataclass(frozen=True)
 class SocialWeatherObservation:
     schema_version: int
@@ -84,7 +129,9 @@ class SocialWeatherObservation:
 
     @property
     def observation_id(self) -> str:
-        return receipt_hash(self.as_dict(include_id=False))
+        """Content address of what was observed, not of what it was scored
+        against. See `identity_document`."""
+        return receipt_hash(identity_document(self.as_dict(include_id=False)))
 
     def as_dict(self, include_id: bool = True) -> dict:
         d = {
@@ -218,7 +265,26 @@ def save_climatology(conn: sqlite3.Connection, clim: Climatology,
 
 
 def save_observations(conn: sqlite3.Connection, obs: list,
-                      sealed_at: str) -> int:
+                      sealed_at: str) -> dict:
+    """Seal observations, writing only the ones that actually changed.
+
+    Returns `{"considered", "written", "unchanged"}`. The breakdown is the
+    point: on a healthy reseal `written` should be the number of windows that
+    arrived, and a run that reports `written == considered` over an unchanged
+    range is the archive forking again.
+
+    Once identity stopped hashing over the sliding baseline (see
+    `identity_document`), a reseal produced the same ids and the same
+    documents, and `INSERT OR REPLACE` still deleted and rewrote all 43,200
+    rows every time — about 180 MB of redundant page writes per run, measured.
+    That was never *growth*, so it never showed up as a size problem; it was
+    just the same work done again, and it is what made a tight producer
+    cadence look unaffordable.
+
+    `sealed_at` is deliberately left alone on an unchanged row. It records when
+    this observation was sealed, not when it was most recently re-confirmed,
+    and the first answer is the true one.
+    """
     rows = [
         (o.observation_id, o.ts_start, o.ts_end, o.window,
          o.confidence.support, o.confidence.coverage,
@@ -227,11 +293,29 @@ def save_observations(conn: sqlite3.Connection, obs: list,
          stable_json(o.as_dict()), sealed_at)
         for o in obs
     ]
-    conn.executemany(
-        "INSERT OR REPLACE INTO weather_observation(observation_id, ts_start, "
-        "ts_end, window, support, coverage, eligible, climatology_id, "
-        "document, sealed_at) VALUES(?,?,?,?,?,?,?,?,?,?)", rows)
-    return len(rows)
+    if not rows:
+        return {"considered": 0, "written": 0, "unchanged": 0}
+
+    # One lookup for the whole batch rather than a query per observation.
+    existing: dict = {}
+    ids = [r[0] for r in rows]
+    for start in range(0, len(ids), 500):
+        chunk = ids[start:start + 500]
+        marks = ",".join("?" * len(chunk))
+        for oid, document in conn.execute(
+                f"SELECT observation_id, document FROM weather_observation "
+                f"WHERE observation_id IN ({marks})", chunk):
+            existing[oid] = document
+
+    changed = [r for r in rows if existing.get(r[0]) != r[8]]
+    if changed:
+        conn.executemany(
+            "INSERT OR REPLACE INTO weather_observation(observation_id, "
+            "ts_start, ts_end, window, support, coverage, eligible, "
+            "climatology_id, document, sealed_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
+            changed)
+    return {"considered": len(rows), "written": len(changed),
+            "unchanged": len(rows) - len(changed)}
 
 
 def load_observations(conn: sqlite3.Connection, since: str | None = None,

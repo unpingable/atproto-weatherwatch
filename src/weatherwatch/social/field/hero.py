@@ -100,6 +100,11 @@ table.crit td { font-family:var(--font-sans); font-size:12.5px; }
 details.wx-crit { margin:14px 0 0; }
 details.wx-crit > summary { cursor:pointer; color:var(--accent);
   font-family:var(--font-sans); font-size:13px; padding:6px 0; }
+/* 44px is the touch-target floor; this measured 33. */
+@media (max-width:560px) {
+  details.wx-crit > summary { padding:13px 0; min-height:44px;
+                              display:flex; align-items:center; }
+}
 .wx { --wx-ink: var(--ink); }
 .wx-head { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,340px);
   gap:26px; align-items:start; }
@@ -144,6 +149,23 @@ details.wx-crit > summary { cursor:pointer; color:var(--accent);
   color:var(--muted); flex:1 1 auto; text-align:center; white-space:nowrap;
   border-right:1px solid var(--rule); letter-spacing:.02em; }
 .wx-ladder span:last-child { border-right:0; }
+/* Six nowrap cells in a flex row wrap into a ragged second line with "Severe
+   storm" orphaned on its own, which reads as a broken table rather than a
+   scale. A grid keeps the cells equal and the rows full. */
+@media (max-width:700px) {
+  .wx-ladder { display:grid; grid-template-columns:repeat(3,1fr); }
+  .wx-ladder span { border-bottom:1px solid var(--rule); font-size:11.5px;
+                    padding:7px 6px; }
+  .wx-ladder span:nth-child(3n) { border-right:0; }
+  .wx-ladder span:nth-last-child(-n+3) { border-bottom:0; }
+}
+@media (max-width:430px) {
+  .wx-ladder { grid-template-columns:repeat(2,1fr); }
+  .wx-ladder span:nth-child(3n) { border-right:1px solid var(--rule); }
+  .wx-ladder span:nth-child(2n) { border-right:0; }
+  .wx-ladder span:nth-last-child(-n+3) { border-bottom:1px solid var(--rule); }
+  .wx-ladder span:nth-last-child(-n+2) { border-bottom:0; }
+}
 .wx-ladder span.on { color:var(--panel); background:var(--wx-ink);
   font-weight:650; }
 .wx-ladder-note { font-family:var(--font-sans); font-size:11px;
@@ -151,7 +173,8 @@ details.wx-crit > summary { cursor:pointer; color:var(--accent);
 
 /* --- history strip ----------------------------------------------------- */
 .wx-hist { display:grid; gap:1px; background:var(--rule);
-  grid-template-columns:repeat(auto-fit,minmax(min(112px,100%),1fr));
+  /* 112px could not hold "Turbulent" beside its icon at 375px. */
+  grid-template-columns:repeat(auto-fit,minmax(min(138px,100%),1fr));
   border:1px solid var(--rule); border-radius:6px; overflow:hidden;
   margin:0; }
 .wx-hist div { background:var(--panel); padding:9px 11px; min-width:0; }
@@ -159,7 +182,13 @@ details.wx-crit > summary { cursor:pointer; color:var(--accent);
   text-transform:uppercase; letter-spacing:.07em; color:var(--muted);
   margin-bottom:3px; }
 .wx-hist .s { font-family:var(--font-sans); font-size:13px; font-weight:600;
-  display:flex; align-items:center; gap:6px; }
+  display:flex; align-items:center; gap:6px;
+  /* `overflow-wrap:anywhere` on the body was breaking state names mid-word --
+     "Turbul / ent" -- which makes a published state label look like a
+     rendering fault. A state name is a term, not prose: it wraps between
+     words or not at all. */
+  overflow-wrap:normal; word-break:keep-all; }
+.wx-hist .s i { flex:0 0 auto; }
 .wx-hist .s i { font-style:normal; font-size:15px;
   font-family:"Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",sans-serif; }
 .wx-hist .none { color:var(--muted); font-weight:400; }

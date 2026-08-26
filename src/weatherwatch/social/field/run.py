@@ -76,9 +76,11 @@ def replay_observation(document: dict) -> str:
     replayable rather than merely persisted.
     """
     from ..envelope import receipt_hash
+    from .observation import identity_document
 
-    # Strip ONLY the id. `structural_absences` is part of what the id commits
-    # to -- the record's statement of what it cannot measure is content, not
-    # presentation, and excluding it here made replay silently disagree.
-    body = {k: v for k, v in document.items() if k != "observation_id"}
-    return receipt_hash(body)
+    # The SAME projection the id was minted with -- not a re-implementation of
+    # it. `structural_absences` is part of what the id commits to (the record's
+    # statement of what it cannot measure is content, not presentation, and
+    # excluding it once made replay silently disagree); baseline evidence is
+    # not, because it is re-scored on every reseal.
+    return receipt_hash(identity_document(document))

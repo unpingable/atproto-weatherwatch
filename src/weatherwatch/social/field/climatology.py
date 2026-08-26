@@ -186,6 +186,30 @@ class QuantityClimatology:
     support_note: str
 
 
+#: What a climatology's identity is NOT.
+#:
+#: These describe the *extent* of the observation the baseline was fitted over
+#: — where the sliding window happened to start and stop, and how much of it
+#: there was. They are real evidence and they stay in the document; they are
+#: simply not what makes this baseline *this* baseline.
+#:
+#: They were in the identity, and that was the bug. The sealer re-fits over a
+#: trailing range, so ts_start and ts_end move on every run by construction.
+#: Since `observe()` stamps `climatology_id` onto every observation and the
+#: observation hashed over it, one hourly reseal minted 43,201 logically
+#: identical observations under fresh ids — about 175 MB a run, roughly 4 GB a
+#: day, of duplicate epistemology. A perfectly efficient garbage collector for
+#: that producer would still be the wrong repair.
+EXTENT_FIELDS = (
+    "ts_start", "ts_end", "n_windows", "n_observed", "n_eligible",
+    "n_days", "n_weeks", "hour_of_week_supported", "hour_of_week_note",
+)
+
+#: Provenance keys that likewise slide. `run_ids` grows every time the
+#: collector restarts, which says nothing about what the baseline *is*.
+PROVENANCE_EXTENT_KEYS = ("run_ids",)
+
+
 @dataclass(frozen=True)
 class Climatology:
     schema_version: int
@@ -202,9 +226,33 @@ class Climatology:
     quantities: dict
     provenance: dict = field(default_factory=dict)
 
+    def identity_document(self) -> dict:
+        """The fields that make this climatology *this* climatology.
+
+        **Identity is the fitted baseline**: the schema and window it was fitted
+        under, the distributions themselves (percentiles, spread, support), and
+        the observer they came from. Two runs that fit the same numbers are the
+        same baseline no matter which slice of wall clock produced them, and a
+        run whose percentiles genuinely moved is a different baseline and gets a
+        different id.
+
+        Everything in `EXTENT_FIELDS` and `PROVENANCE_EXTENT_KEYS` is excluded.
+        It stays in `as_dict()` — a reader still learns exactly which interval
+        was fitted and over how many day replicates — it just does not fork the
+        address.
+        """
+        document = self.as_dict(include_id=False)
+        for key in EXTENT_FIELDS:
+            document.pop(key, None)
+        provenance = dict(document.get("provenance") or {})
+        for key in PROVENANCE_EXTENT_KEYS:
+            provenance.pop(key, None)
+        document["provenance"] = provenance
+        return document
+
     @cached_property
     def climatology_id(self) -> str:
-        """Content address of the whole baseline. Computed once per instance.
+        """Content address of the fitted baseline. Computed once per instance.
 
         `observe()` stamps this id onto every observation, so a naive property
         re-canonicalised and re-hashed the entire climatology once per window:
@@ -216,7 +264,7 @@ class Climatology:
         `cached_property` writes through to `__dict__` rather than through
         `__setattr__`, which is what lets it work on a frozen dataclass at all.
         """
-        return receipt_hash(self.as_dict(include_id=False))
+        return receipt_hash(self.identity_document())
 
     def as_dict(self, include_id: bool = True) -> dict:
         d = {

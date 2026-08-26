@@ -802,8 +802,37 @@ def test_the_field_and_detect_timers_do_not_fire_together():
         m = _re.search(r"OnBootSec=(\d+)min", text)
         assert m, f"{name} has no OnBootSec"
         starts[name] = int(m.group(1))
-        assert "OnUnitActiveSec=1h" in text
     assert len(set(starts.values())) == 2, f"timers collide: {starts}"
+
+
+def test_the_field_cadence_satisfies_the_freshness_rule_it_publishes():
+    """The producer must seal often enough for the criteria table to be true.
+
+    This ran hourly against a 15-window staleness rule on 60-second windows,
+    so the public page truthfully reported `station_offline` for roughly 45
+    minutes in every 60. The rule was right and the cadence was wrong; pinning
+    the relationship here stops either drifting away from the other.
+    """
+    import re as _re
+    from weatherwatch.social.field import conditions as cond_mod
+
+    text = _unit("weatherwatch-field.timer")
+    m = _re.search(r"OnUnitActiveSec=(\d+)(min|h)", text)
+    assert m, "the field timer has no repeat interval"
+    period_s = int(m.group(1)) * (3600 if m.group(2) == "h" else 60)
+
+    # The deployed window width; the collector unit is the authority on it.
+    collector = _unit("weatherwatch-collector.service")
+    width_m = _re.search(r"--window\s+(\d+)", collector)
+    width_s = int(width_m.group(1)) if width_m else 60
+    budget_s = cond_mod.STALE_AFTER_WINDOWS * width_s
+
+    assert period_s < budget_s, (
+        f"sealing every {period_s}s cannot satisfy a {budget_s}s freshness "
+        f"budget: the page will report the station offline between runs")
+    # and with enough room that a single missed run is not a public outage
+    assert period_s * 2 < budget_s, (
+        f"no margin: one missed run at {period_s}s crosses {budget_s}s")
 
 
 def test_timer_publishes_every_five_minutes_without_catchup():

@@ -82,13 +82,22 @@ def _field_store(tmp_path, days=30, spike=None, name="social.sqlite",
 # --- 1. the reading comes before the paperwork -----------------------------
 
 def test_the_state_precedes_the_receipts(plain_db, tmp_path):
+    """Anchored on markup, not on prose.
+
+    This matched the literal "The receipts", which also occurs in a stylesheet
+    comment explaining the receipts summaries' touch-target size — so the
+    assertion silently started comparing against a byte offset inside the
+    `<style>` block. The page keeps its implementation comments deliberately;
+    the test is what had to become specific.
+    """
     out = tmp_path / "site"
     report.generate_report(plain_db, out)
     html = report_html = (out / "index.html").read_text()
-    state = html.index("Station offline")
-    assert state < html.index("The receipts")
-    assert state < html.index("A &middot; Observation status") if \
-        "A &middot;" in report_html else state < html.index("A · Observation status")
+    body = html[html.index("<body"):]
+    state = body.index("Station offline")
+    assert state < body.index('class="deck"')
+    assert state < body.index("A &middot; Observation status") if \
+        "A &middot;" in report_html else state < body.index("A · Observation status")
 
 
 def test_the_scope_denial_still_comes_first(plain_db, tmp_path):

@@ -211,14 +211,19 @@ def cmd_field(args) -> int:
     econn.execute("BEGIN")
     try:
         fobs.save_climatology(econn, clim, now)
-        n = fobs.save_observations(econn, obs, now)
+        sealed = fobs.save_observations(econn, obs, now)
         econn.execute("COMMIT")
     except Exception:
         econn.execute("ROLLBACK")
         raise
 
     out = {
-        "observations": n,
+        "observations": sealed["considered"],
+        # `written` is the operational number: on a healthy reseal it is the
+        # count of windows that actually arrived. If it ever equals
+        # `observations` over an unchanged range, the archive is forking.
+        "written": sealed["written"],
+        "unchanged": sealed["unchanged"],
         "climatology_id": clim.climatology_id,
         "days": clim.n_days,
         "weeks": clim.n_weeks,

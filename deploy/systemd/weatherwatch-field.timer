@@ -3,18 +3,31 @@ Description=Weatherwatch - periodic social-weather field sealing
 Documentation=file:/opt/weatherwatch/src/weatherwatch/social/field/README.md
 
 [Timer]
-# Hourly, offset from the detection pass so the two oneshots do not contend
-# for the same SQLite file. Both are writers to social.sqlite; neither is
-# latency-critical, and an observation is a statement about a window that has
-# already closed.
+# Five minutes, matched to the freshness rule the page publishes rather than
+# chosen for the producer's convenience.
 #
-# The published page reports the newest COMPLETE reading and says how old it
-# is, so an hourly cadence is visible to the reader rather than hidden: a
-# station that stops filing is reported as `station_offline` after
-# STALE_AFTER_WINDOWS, not quietly carried forward as weather.
-OnBootSec=14min
-OnUnitActiveSec=1h
-AccuracySec=1min
+# `conditions.STALE_AFTER_WINDOWS` is 15, and the deployed window is 60 s, so a
+# reading older than 15 minutes is reported as `station_offline` — correctly,
+# because that is what the criteria table says. This unit ran HOURLY, so the
+# public page truthfully reported the station offline for roughly 45 minutes in
+# every 60. The fix is to seal often enough to satisfy the declared semantics,
+# not to redefine freshness around a cron entry.
+#
+# Margin: worst-case reading age at publish is one interval plus one run,
+# about 5.5 minutes against a 15-minute rule, so two consecutive runs can fail
+# before a reader is told the station is offline.
+#
+# Affordable because sealing is idempotent: identity no longer hashes over the
+# sliding baseline, and `save_observations` writes only what changed, so a
+# steady-state run adds 0 rows and 0 bytes. Measured on 30 days of minute
+# windows: ~21 s, almost all of it re-fitting the climatology and reading the
+# existing documents back to compare.
+#
+# Offset from the detection pass so the two oneshots do not contend for the
+# same SQLite file, and `AccuracySec` keeps systemd from coalescing them.
+OnBootSec=3min
+OnUnitActiveSec=5min
+AccuracySec=15s
 Persistent=true
 
 [Install]
