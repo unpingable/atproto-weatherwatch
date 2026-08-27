@@ -60,14 +60,46 @@ These are attractive precisely because they require a new qualified boundary:
 Migrant follow-through is explicitly excluded: recognizing that the same
 person migrated and later wrote is an actor join, not temporal composition.
 
-## Composition candidates
+## Composition candidates, ranked
 
-Reduced native facts may eventually compose with PLC operation aggregates,
-normalized search-interest samples, timestamped event corpora, platform status
-feeds, Labelwatch, or published research measurements. The contract is in
-[`TEMPORAL-COMPOSITION.md`](TEMPORAL-COMPOSITION.md): facts cross source
-reducers first, then join by time only, under explicit semantic rules and the
-weakest participating coverage envelope.
+The contract is in [`TEMPORAL-COMPOSITION.md`](TEMPORAL-COMPOSITION.md): facts
+cross source reducers first, then join by time only, under explicit semantic
+rules and the weakest participating coverage envelope. The dividing rule for
+admitting anything new:
+
+> New sources should primarily explain coverage, bound measurement error, or
+> provide timestamped context. They must not introduce actor joins or silently
+> convert correlation into explanation.
+
+Ranked — filing order, not authorization:
+
+- **P1 — Standing second Jetstream observer.** Turn the single paired probe
+  into a continuous observer-divergence measurement: observed activity plus a
+  divergence envelope, instead of one stream posing as truth. Streams are
+  never summed; disagreement is a coverage signal, and the read layer keeps
+  refusing cross-observer combination. Observer-side rather than a composed
+  source; extends the extended-observer-divergence candidate above.
+- **P2 — Infrastructure and status annotations.** Relay, PDS, and service
+  incidents joined by clock, with provenance. Distinguishes "activity fell"
+  from "the window onto activity degraded". Annotation only; never "this
+  outage caused that activity change".
+- **P3 — Protocol and release annotations.** Lexicon additions, relay and
+  PDS software releases, app releases, collector-relevant upstream changes.
+  Explains structural discontinuities — including the `untracked.collection`
+  and `unclassified.*` canaries — without attributing motives to users.
+- **P4 — PLC aggregate composition.** The reducer is already qualified;
+  compare reduced weekly PLC facts with reduced activity facts under the
+  installed `production-plc-proximity.v1` rule. No actor joins, provider
+  narratives, or migration-success claims.
+- **Parking lot — external event corpora and search-interest samples.**
+  Interesting but epistemically expensive: they import keyword selection,
+  geographic sampling, opaque normalization, and a "what counts as attention"
+  decision, and they measure the consumption side this instrument
+  structurally refuses to claim. If ever admitted, they are annotations with
+  dates ("Aug 14 — major outage"), never detections ("Weatherwatch detected
+  reaction to …"). Labelwatch/Driftwatch facts and published research
+  measurements wait here too; the C8 seam in the composition contract is
+  their entry point if either is ever reduced and admitted.
 
 Deferred without implementation in this closeout: live PLC source admission,
 unresolved compositional-disclosure questions, a real composite publication,
