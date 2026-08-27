@@ -1,333 +1,318 @@
-# weatherwatch
+# Weatherwatch
 
 [![CI](https://github.com/unpingable/atproto-weatherwatch/actions/workflows/ci.yml/badge.svg)](https://github.com/unpingable/atproto-weatherwatch/actions/workflows/ci.yml)
 
-An aggregate ATProto/Bluesky event weather instrument: it counts network-level
-activity rates from a Jetstream source and keeps no people. (The name began as
-a disposable handle; it is now load-bearing — deployed path, published URL,
-`/beef` redirect.)
+Weatherwatch is an observability instrument for aggregate activity on the AT
+Protocol network (the protocol Bluesky runs on). It watches one Jetstream
+event stream, counts categories of protocol activity over time, records how
+good its own observation was, and renders a static dashboard showing how
+those rates change.
 
-Measured protocol behaviour: [`M0-VERIFICATION-RESULTS.md`](M0-VERIFICATION-RESULTS.md).
-The paired-observer result also has a concise standalone note:
-[`Public Jetstream observers were not interchangeable in one paired probe`](docs/JETSTREAM-OBSERVER-DIVERGENCE.md).
+It measures the network's observable weather — how much of which kind of
+activity is flowing — not individual people, posts, sentiment, arguments, or
+social drama.
 
-**Published at <https://weatherwatch.neutral.zone/>** since 2026-08-22; the
-former `labelwatch.neutral.zone/weatherwatch` path and the `/beef` alias both
-301 there, so existing references keep working.
+**Public dashboard: <https://weatherwatch.neutral.zone/>** — static files,
+no account needed, no JavaScript required, nothing about a visitor observable
+beyond ordinary web-server logs. Published since 2026-08-22.
 
-**Status: M0–M7 implemented; collector supervised under systemd; static report
-published at <https://weatherwatch.neutral.zone/> (`/beef` 301s to
-it).** There is still no HTTP server or network API in this codebase — the
-collector writes a local SQLite file and the report is static HTML generated
-into a directory, which is then published. A versioned local status interface
-and repository concern declaration are documented in
-[`docs/VISIBILITY.md`](docs/VISIBILITY.md). Run it from a terminal.
+## What it is
 
-The bounded PLC source-format reducer is documented in
-[`docs/PLC-REDUCTION.md`](docs/PLC-REDUCTION.md). Its low-count suppression is
-per fact; it does not claim compositional non-disclosure across related facts
-or repeated releases. Its identity claim is structural and limited to the
-reducer/output boundary, not host-memory confidentiality.
+ATProto is a public protocol: when someone posts, likes, follows, blocks, or
+deletes, that action is a record written to a public relay network.
+*Jetstream* is a public WebSocket service that streams those events, as JSON,
+as they flow through a relay.
 
-**What the published numbers are entitled to claim.** Rates are *as observed at
-one named Jetstream instance*, not network truth. M0 falsified relay
-interchangeability (§Item 11: two same-region endpoints differing **1.61×** in
-post volume, same-endpoint self-control 1.000). The deployed collector runs on
-`jetstream1.us-east` — the higher-observing side, which makes the numbers larger
-without making them global. Local z-scores stay self-consistent against a single
-observer; **absolute rates do not**, in either direction. Observed-volume ratios
-are inter-observer comparisons, never coverage figures: there is no canonical
-denominator. A second collector and any multi-observer reconciliation remain
-out of scope.
+Weatherwatch connects to one Jetstream endpoint and counts what goes by:
 
-## Social episode sensors (`weatherwatch social`)
+- posts created, and of those, replies and quotes;
+- likes, reposts, follows, blocks, unblocks;
+- deletes of each of those;
+- list-membership changes, profile updates, account and identity events;
+- each of the above as a rate per minute, over time;
+- and, just as deliberately, the health of the observation itself — gaps,
+  degraded windows, lag — so a number never travels without its coverage.
 
-An analysis layer over this same observation lane: it segments the buckets
-already persisted here into **episodes** — block bursts, like/repost storms,
-lulls — and, behind an opt-in edge sink, adds concentration, overlap,
-synchronisation and account-lifecycle co-occurrence. The subject of every
-detection is the episode, never an account.
+This is closer to network telemetry than to social analytics. The instrument
+produces counters and coverage statements; it never reads content for meaning
+and it never follows a person.
 
-The weather lane is unchanged and still keeps no people. Edge custody is off
-by default and writes a separate database. The current deployment explicitly
-enables a narrow `block,listitem` edge sink with 24-hour retention; those
-identity-bearing rows and local findings are never published. Public aggregate
-episodes additionally fail closed unless the local store witnesses a
-provisional 10-actor support floor **and** — for a rate excess — no single
-actor could have produced the whole departure, then expose only
-hour-coarsened, reduced fields. This is disclosure resistance, not anonymity;
-what each gate does and does not establish is set out, with the adversarial
-case that forced the second one, in
-[`BOUNDARIES.md`](src/weatherwatch/social/BOUNDARIES.md). Overview:
-[`src/weatherwatch/social/README.md`](src/weatherwatch/social/README.md).
+## What it is not
 
-## What it does
+- **Not sentiment analysis or conflict detection.** A count of block events
+  is a count of block events. The instrument has no access to what anyone
+  meant, felt, or intended, and it does not infer those things from rates.
+- **Not content analysis.** Post text, handles, profiles, and media are
+  discarded at the classifier; they are never stored.
+- **Not user profiling.** No leaderboards, no account pages, no per-person
+  anything. The weather database structurally cannot hold a person (see
+  *Privacy and identity*).
+- **Not a popularity ranking or a "drama meter."** Nothing here ranks posts,
+  accounts, topics, or communities.
+- **Not a census of ATProto, and not ground truth.** Every number is what
+  one named observer saw during one observation interval. See
+  *Observation limits*.
+- **Not a moderation, reputation, or alerting system.**
 
-```
-Jetstream (one named endpoint)
-  -> classify transiently          identity read, never returned
-  -> increment in-memory counters  63 possible keys, no free text
-  -> close 60s windows by stream clock
-  -> ONE transaction: buckets + window health + resume cursor
-```
+## What you can see
+
+The dashboard at <https://weatherwatch.neutral.zone/> is a static page,
+regenerated on a five-minute cadence from the local database:
+
+- **Current conditions** — a headline state (`Calm`, `Active`, `Turbulent`,
+  `Storm`, …) built the way a weather warning is built: published criteria
+  over named, visible inputs, so a reader who distrusts the label can
+  reconstruct it. When the baseline cannot support a comparison the state is
+  `Conditions unavailable`, because "we cannot tell" and "nothing is
+  happening" are different facts.
+- **Sixteen primitive cards** — the observed rates (posts, replies, quotes,
+  reposts, likes, follows, blocks, deletes, …) with per-minute sparklines.
+  These are the receipts; everything else is derived from them.
+- **Condition labels** — `quiet` / `normal` / `elevated` / `surging` /
+  `degrading`, which are threshold cuts on a z-score against a short trailing
+  baseline *of the same stream*, with an effect-size floor in front of them.
+  They are descriptive local-baseline labels, not validated social states and
+  not statistically calibrated; the z-score, baseline, and percent change are
+  printed unmodified beside every label.
+- **Ratios with their support** — e.g. replies per post, blocks per follow —
+  always rendered with the numerator and denominator counts that produced
+  them, so the support cannot fall away from the number.
+- **Observation health** — per-window quality: clean, partial, gap, degraded,
+  unobserved.
+- **Aggregate social episodes** — a bounded, disclosure-gated list of
+  episodes (a block burst, a like storm, a lull) detected over the aggregate
+  counters. The subject of every episode is the episode; no account appears.
+  See *Privacy and identity*.
+- **Findings** — permanent pages for published measurement results, with
+  machine-readable aggregate receipts. A finding is a historical publication,
+  not current observation state.
+
+Everything is also published as static JSON (`summary.json`, per-day history,
+`social.json`, finding receipts) with versioned schemas. The full artifact
+contract is in [`docs/PUBLIC-ARTIFACTS.md`](docs/PUBLIC-ARTIFACTS.md).
+
+## Privacy and identity
+
+The short version: the weather database and everything published contain
+counts and coverage metadata — no accounts, no posts, no text, no identity of
+any kind. The longer version has three lanes, and they are deliberately
+different.
+
+### Weather lane
+
+Jetstream events do carry identity (the acting account's DID — its
+decentralized identifier — plus record identifiers). The classifier reads
+each event transiently and emits only
+symbols drawn from a **finite, enumerated metric alphabet** — 63 entries, no
+free text. A DID cannot appear in the output because no DID is a member of
+that set; the test suite asserts the containment against the whole fixture
+corpus rather than merely promising it. The event itself never leaves the
+classifier.
 
 What the weather database persists: integer counts per (run, window, metric),
-an observation health row per window, and a resume cursor. That is all.
+one observation-health row per window, and a resume cursor. That is all — no
+raw events, DIDs, handles, record keys, CIDs, post text, or URLs.
 
-What the weather database and public artifacts never contain: raw events,
-DIDs, handles, rkeys, CIDs, event-supplied AT URIs, post text, display names,
-descriptions, alt text, or event-supplied URLs. The separately enabled,
-bounded social edge sink deliberately
-retains the minimal identity-bearing edge fields documented in
-[`BOUNDARIES.md`](src/weatherwatch/social/BOUNDARIES.md); it is local-only.
+### Social episode lane
 
-## Privacy model
+An optional analysis layer detects aggregate *episodes* over the counters —
+block bursts, like/repost storms, lulls — and, behind an opt-in edge sink,
+concentration and overlap questions. Some of those questions are about *who
+acted on whom*, which a counter has already discarded; so the edge sink,
+**when explicitly enabled**, retains bounded actor→subject edge rows in a
+**separate local database** with a short retention horizon. It is off by
+default in code. The current deployment enables a narrow `block,listitem`
+sink with 24-hour retention; those identity-bearing rows are local-only and
+are never published.
 
-The classifier is the identity boundary, and the guarantee is structural
-rather than filter-based: its output alphabet is a **finite frozenset**
-(`classify.ALLOWED_METRICS`, 63 entries). A DID cannot appear in the output
-because no DID is a member of that set. Tests assert the containment against
-the whole fixture corpus, and further tests assert that nothing identity-shaped
-reaches the weather database or any public artifact.
+What may be published is narrower still: aggregate-tier episodes only, and
+only if the local edge store witnesses at least ten distinct actors for the
+interval **and** — for a rate excess — no single actor could have produced
+the whole departure. Times are coarsened to UTC hours; exact counts,
+statistics, and stable IDs are omitted; missing evidence fails closed. This
+is disclosure resistance, not anonymity. The full boundary, including what
+each gate does *not* establish, is in
+[`src/weatherwatch/social/BOUNDARIES.md`](src/weatherwatch/social/BOUNDARIES.md).
 
-Test fixtures are scrubbed structure captured during M0 — synthetic DIDs use
-the reserved `did:example:` method and synthetic hosts use RFC 2606
-`.invalid`. `spike/check_fixture_privacy.py` is the tripwire.
+### PLC reduction
 
-## Observation runs
+A separate offline command, `weatherwatch plc-reduce`, reduces a local copy
+of the public `plc.directory` export — PLC is ATProto's identity directory,
+and its export is identity-rich: DIDs, handles, service endpoints — into
+bounded aggregate weekly facts (operation, creation,
+tombstone, and endpoint-mutation counts). **Identity enters the reducer and
+cannot leave the persisted output**: the output schema has no DID, handle,
+endpoint, provider, pseudonym, or cohort representation.
 
-This is an instrument that *may* run continuously, not a daemon that must.
+The qualifications matter and are preserved exactly:
+
+- per-fact low-count suppression (0–9 all become the same `UNKNOWN`) is
+  qualified;
+- compositional non-disclosure across multiple facts or publication revisions
+  is **not** claimed;
+- live PLC source acquisition and admission are **not** claimed;
+- an endpoint mutation is not a migration, and a migration-like transition is
+  not a *successful* migration.
+
+The reducer contract, custody mechanics, and refused-claims list are in
+[`docs/PLC-REDUCTION.md`](docs/PLC-REDUCTION.md).
+
+## Observation limits
+
+**One observer, not the network.** Weatherwatch watches one named Jetstream
+endpoint. A paired probe on 2026-08-08 opened concurrent connections for the
+same 120 seconds: `jetstream1.us-east` delivered **1.61×** the post volume of
+`jetstream2.us-east`, while two sockets to the same endpoint agreed exactly
+(self-control 1.000). Public Jetstream observers are not interchangeable
+complete views. The deployed collector uses `jetstream1.us-east` — the
+higher-observing side of that probe, which makes its numbers larger without
+making them more global. Therefore:
+
+- every number is "observed at this named endpoint during this interval" —
+  never a network total, and higher observed volume is not evidence of
+  greater completeness (there is no canonical denominator);
+- streams from different observers cannot be summed — the read layer refuses
+  to combine them, and changing endpoint starts a new run with a hard
+  observation seam;
+- comparisons *over time from one observer* are the defensible reading;
+  absolute rates are not, in either direction.
+
+Evidence: [`docs/JETSTREAM-OBSERVER-DIVERGENCE.md`](docs/JETSTREAM-OBSERVER-DIVERGENCE.md)
+and the full measured-protocol record in
+[`M0-VERIFICATION-RESULTS.md`](M0-VERIFICATION-RESULTS.md).
+
+**Observed, unobserved, degraded — three different facts.** The instrument
+distinguishes states that are easy to confuse and expensive to confuse:
 
 | | |
 |---|---|
-| outside a run | NOT OBSERVED — no row exists |
-| inside a run, quiet | OBSERVED, EMPTY — row exists with `events_seen = 0` |
-| inside a run, degraded | OBSERVED, CONDITIONED — `coverage_state = degraded` |
-| missing interval in a run | GAP — `gap_us`, `resume_seam` |
+| outside a run | **unobserved** — no row exists; nobody was watching, which is not quiet |
+| inside a run, quiet | **observed, empty** — a row exists with `events_seen = 0` |
+| inside a run, impaired | **conditioned** — `partial`, `gap`, or `degraded`, flagged on the window |
 
-A machine being off between runs is not a failure and produces no fake missing
-windows. Partial first/last windows record their real observed duration and
-are flagged `partial`; they never masquerade as full ones.
+Nothing is interpolated across unobserved time, no baseline learns from a
+window with a measured completeness defect, and a machine being off between
+runs produces no fake missing windows. A quiet reading means observed quiet;
+a gap says so.
 
-## Coverage claim
+## How it works
 
-    Aggregate activity observed from this Jetstream source during this
-    observation interval.
-
-M0 falsified the assumption that public Jetstream instances are
-interchangeable complete views: `jetstream1.*` delivered ~1.6x the post volume
-of `jetstream2.us-east` in a concurrent window, while two sockets to the same
-instance agreed exactly. So:
-
-* every run binds to one exact endpoint;
-* a cursor from one endpoint is never used against another;
-* changing endpoint starts a new run — a hard observation seam;
-* runs from different endpoints, or overlapping in time, refuse to be summed;
-* no relay is described as complete or as ground truth. Higher volume is not
-  evidence of greater completeness.
-
-## Usage
-
-```bash
-pip install -e .
-
-weatherwatch collect                       # unbounded, Ctrl-C to stop
-weatherwatch collect --duration 30m
-weatherwatch collect --endpoint jetstream2.us-east --duration 1h
-
-weatherwatch runs                          # observation runs and coverage
-weatherwatch stats                         # metric totals and rates
-weatherwatch series post.create            # per-window, with conditioning
-weatherwatch ratios                        # reply/post, block/follow, ...
-weatherwatch correlate post.create.quote block.create
-weatherwatch report --output ./beef        # static observatory + findings
-weatherwatch status                         # concise current local diagnostics
-weatherwatch status --json                  # project.ops.status/v1
-weatherwatch compose --list-rules           # installed clock-only composition rules
-weatherwatch compose --input facts.json --rule RULE_ID
-weatherwatch plc-reduce --input plc.jsonl --acquired-at 2026-08-27T18:00:00Z
+```text
+Jetstream (one named endpoint)
+   |
+   v
+classify()  — transient; emits only symbols from the finite 63-metric alphabet
+   |
+   v
+in-memory counters -> 60-second windows closed by the stream's own clock
+   |
+   v
+SQLite  — one transaction: counters + window health + resume cursor
+   |
+   v
+weatherwatch report  ->  static HTML + JSON (published by directory swap)
 ```
 
-Read commands default to the most recent *compatible* sequence of runs on one
-endpoint. Asking for an incompatible combination fails loudly rather than
-producing a number that describes no actual observation.
+Two optional side paths, both described above: the social edge sink taps the
+same parsed message into a separate local store feeding episode detection,
+and `plc-reduce` runs offline against a local export file. Neither touches
+the weather lane's guarantees.
 
-Default endpoint is `jetstream1.us-east` — the higher-volume endpoint M0
-measured. Configurable, and the choice is recorded on every run.
+There is no HTTP server, no API, and no query surface in this codebase. The
+collector may run continuously (supervised `systemd` units live in
+[`deploy/`](deploy/README.md)), but it is an instrument that *may* run, not a
+daemon that must: a bounded 30-minute run is a complete, valid observation.
 
-Keep the SQLite file on local disk. Never NFS/SMB/NAS.
+## Try it
 
-## Layout
-
-```
-src/weatherwatch/
-  classify.py     the identity boundary; pure, finite output alphabet
-  accumulator.py  window assignment, coverage accounting, commit invariant
-  db.py           four tables and the atomic flush
-  health.py       coverage state machine (adapted from driftwatch)
-  collector.py    the asyncio loop, reconnect/replay discipline
-  read.py         the "not summable" guard
-  query.py        read side: series, run summaries, conditioning flags
-  derive.py       read-time ratios, rolling baselines, z-scores, correlation
-  report.py       static observatory generation (atomic directory swap)
-  findings.py     published finding registry + aggregate receipts
-  composition.py  clock-only reduced-fact composition + laundering refusals
-  plc_reducer.py  identity-rich PLC JSONL -> thresholded identity-free facts
-  visibility.py   repo-declared concern observation + human status
-  publication.py  candidate eligibility/privacy gate (not authority)
-  cli.py
-.ops/
-  concerns.toml   neutral required concern inventory
-  observation.toml separate project-level acquisition binding
-  *.schema.json   declaration and shared status schemas
-spike/            M0 throwaway probes — do not build on these
-fixtures/         scrubbed structural fixtures + synthetic hostile cases
-measurements/     M0 aggregate measurements
-```
-
-## Tests
+Requires Python 3.10+.
 
 ```bash
 python -m pip install -e ".[dev]"
-./scripts/qualify.sh
+
+weatherwatch collect --duration 30m   # one bounded observation run
+weatherwatch runs                     # runs and their coverage
+weatherwatch stats                    # metric totals and rates
+weatherwatch report --output ./report # static dashboard in ./report
 ```
 
-This is the authoritative local and CI qualification: it compile-checks the
-source and tests, runs the fixture privacy tripwire, then runs the complete
-test suite. It includes end-to-end collector tests against an in-process fake Jetstream that
-reproduces the inclusive-cursor semantics M0 measured, so `cursor + 1` is
-exercised rather than assumed.
+Read commands default to the most recent compatible sequence of runs on one
+endpoint; asking for an incompatible combination fails loudly rather than
+producing a number that describes no actual observation. Keep the SQLite file
+on local disk — never NFS/SMB.
+
+Further commands (`series`, `ratios`, `correlate`, `status`, `social`,
+`plc-reduce`, …) are documented in `weatherwatch --help` and
+`weatherwatch <command> --help`.
+
+Run the qualification suite with `./scripts/qualify.sh` — compile checks, the
+fixture-privacy tripwire, and the full test suite, including end-to-end
+collector tests against an in-process fake Jetstream.
+
+## Deeper documentation
+
+- What the public site publishes, and what a consumer may rely on:
+  [`docs/PUBLIC-ARTIFACTS.md`](docs/PUBLIC-ARTIFACTS.md)
+- Measured Jetstream protocol behaviour the design rests on:
+  [`M0-VERIFICATION-RESULTS.md`](M0-VERIFICATION-RESULTS.md)
+- The paired-observer divergence probe, standalone:
+  [`docs/JETSTREAM-OBSERVER-DIVERGENCE.md`](docs/JETSTREAM-OBSERVER-DIVERGENCE.md)
+- Social episode analysis — overview:
+  [`src/weatherwatch/social/README.md`](src/weatherwatch/social/README.md);
+  the privacy boundary:
+  [`src/weatherwatch/social/BOUNDARIES.md`](src/weatherwatch/social/BOUNDARIES.md);
+  the conditions/"social weather" layer:
+  [`src/weatherwatch/social/field/README.md`](src/weatherwatch/social/field/README.md)
+- PLC source reduction contract:
+  [`docs/PLC-REDUCTION.md`](docs/PLC-REDUCTION.md)
+- Time-only composition of already-reduced facts:
+  [`docs/TEMPORAL-COMPOSITION.md`](docs/TEMPORAL-COMPOSITION.md)
+- The local status and concern-visibility interface:
+  [`docs/VISIBILITY.md`](docs/VISIBILITY.md)
+- Deployment and publication:
+  [`deploy/README.md`](deploy/README.md)
+- Research candidates — filed, not authorized:
+  [`docs/OBSERVATORY-ROADMAP.md`](docs/OBSERVATORY-ROADMAP.md) and
+  [`docs/CANDIDATES.md`](docs/CANDIDATES.md)
+
+## The beef thing
+
+Yes, the beef. This project's dashboard originally lived at a joke path,
+`/beef`, and entertained a hypothetical composite called the **Global Beef
+Index**. The canonical site is now `weatherwatch.neutral.zone` and `/beef`
+301s there, so old references keep working — but the joke stays, because the
+joke is load-bearing:
+
+**The joke is the disclaimer.** If a composite over these primitives is ever
+defined, it stays named *Global Beef Index*, because a solemn name —
+Behavioral Turbulence Index, Social Stress Index — would imply a validated
+latent variable this instrument has not earned and cannot currently earn. No
+such index exists; the dashboard shows a placeholder marked *calibration not
+assumed*. (The need was demonstrated, not hypothetical: an LLM shown the old
+`/beef` page confidently classified it as a social-drama detector, which is
+why the negative scope now leads this document and the page.)
+
+**The primitives are authoritative; composites are descriptive hints.** Any
+future index would be a transparent composite over aggregate observable
+behaviour, internally normalized against its own history. Nobody should have
+to trust `BEEF = 73` without inspecting the aggregate series that produced
+it; the primitive cards remain the receipts.
+
+**The denominator gets a lawyer.** Every published ratio renders with its
+numerator and denominator counts attached, window extremes are drawn only
+from windows whose denominator clears a stated legibility floor, and excluded
+windows are counted rather than dropped — because `block/follow = 22.75` off
+a four-event denominator crops into a social index. A ratio can move because
+the numerator rose, because the denominator fell, or because the denominator
+got too small to mean anything. The ratio is the hint; the primitives are the
+receipts.
+
+**Narrative restraint.** "Post deletes elevated, blocks down" must not become
+"morning-after beef" or "users are deleting evidence". Those readings may be
+funny and even right, but the telemetry does not entail them. Humans may make
+the joke; the instrument must not certify it.
 
 ## License
 
 Licensed under either Apache-2.0 or MIT, at your option. See
 [`LICENSE-APACHE`](LICENSE-APACHE) and [`LICENSE-MIT`](LICENSE-MIT).
-
-## Conditioning
-
-Every rate divides by *observed* duration, never nominal window width. Every
-series distinguishes three states that are easy to confuse and expensive to
-confuse:
-
-| | |
-|---|---|
-| `count = 0` | observed, genuinely no activity |
-| `count = None` | **unobserved** — nobody was watching |
-| `quality != clean` | observed but conditioned: partial, gap, loss, degraded |
-
-Nothing is interpolated across unobserved time, and no baseline learns from a
-window with a measured completeness defect. Latency is tracked separately from
-coverage: a collector replaying backlog is far behind real time while missing
-nothing, and its counts stay usable.
-
-Derived conditions (`quiet` / `normal` / `elevated` / `surging` / `degrading`)
-are threshold cuts on a z-score against a short trailing baseline of the same
-stream, with an effect-size floor in front of them: a change smaller than
-`derive.MIN_LABEL_EFFECT` is reported as `normal` however significant it is,
-because a near-flat baseline makes a 3% move enormously significant and a
-reader cannot un-see a red word. Both gates are uncalibrated and carry no
-statistical warrant; the z, baseline and percent change are all still printed
-unmodified beside the label. There is no Global Beef Index; the observatory
-shows a placeholder marked *calibration not assumed*.
-
-## Product doctrine
-
-    The joke is the disclaimer.
-    The composite is descriptive.
-    The primitives are authoritative.
-    The denominator gets a lawyer.
-
-**The joke is the disclaimer.** If a composite is ever defined it stays named
-*Global Beef Index*. The unserious name is deliberate epistemic signalling: a
-solemn construct name — Behavioral Turbulence Index, Social Stress Index —
-would imply a validated latent variable this system has not earned and cannot
-currently earn. Do not professionalise the name.
-
-**The composite is descriptive.** Any future index would be a transparent
-composite over aggregate observable behaviour, internally normalised against
-its own history. Not externally validated, not causal, not sentiment, not
-about individuals, not ground-truth conflict detection.
-
-**Two kinds of calibration, only one of which is available.** *External*
-calibration ("this number corresponds to actual beef") has no defensible
-ground truth: any corpus of remembered beef is selection-biased toward
-spectacle — quote-post pile-ons, famous arguments, public meltdowns — while
-block storms, correlated unfollows and deletion waves may carry no historical
-label at all. Supervised fitting against remembered events would build a
-*spectacle* detector and call it a conflict detector. *Internal* normalisation
-("this combination of primitives is unusual against its own regime") is
-legitimate, and is the only kind on the table.
-
-The placeholder therefore reads *calibration not assumed*. It does not imply
-that validated beef ground truth is merely waiting to be collected, and it
-does not claim an uncalibrated formula already exists.
-
-**The primitives are authoritative.** A composite is a hint layer. Nobody
-should have to trust `BEEF = 73` without inspecting the aggregate series that
-produced it; the 16 primitive cards remain the receipts.
-
-**The denominator gets a lawyer.** Every ratio is a two-body system. The public
-table renders each value in one non-wrapping expression with its numerator and
-denominator counts, so the support cannot fall away from the ratio visually,
-and window extremes are drawn only from windows whose denominator reached
-`report.MIN_RATIO_DENOMINATOR` — a legibility floor, stated as such on the
-page, not a statistical one. Excluded windows are counted in their own column
-rather than dropped. The guard is structural because a prose caveat does not
-travel with a screenshot: `block/follow = 22.75` off a four-event denominator
-crops into a social index.
-`block/follow` can move because blocks rose, because follows fell, because
-both moved, or because the denominator got too small to mean anything. Never
-narrate a ratio as if only the numerator changed, keep both components
-inspectable, and do not treat a metric as a stable baseline merely because it
-sits in a denominator. The ratio is the hint; the primitives are the receipts.
-
-**State the negative scope first.** A cold reader — human or model —
-arriving at what was then `/beef` read "beef" plus Bluesky plus telemetry and
-concluded conflict monitoring. This was observed: an LLM given the page
-confidently classified it as a social-drama detector and had to reason its way
-back out. Every disclaimer on the page was about *coverage* (which relay, how
-complete); none said what is not measured, so there was nothing to correct the
-misread with.
-
-Two fixes followed. The page first led with the denial, and the canonical path
-became `/weatherwatch`, because **a joke needs its disclaimer adjacent and a
-URL travels alone** — `/beef` still 301s so nothing breaks, but a redirect
-renders no text and so primes nothing. The later observatory layout lets a
-verified finding lead while keeping that denial on the landing page before the
-receipts.
-
-Note which phrase actually caused it. "Global Beef Index" is *obviously*
-unserious — that is the joke doing its job. "Cortisol accounting" was the
-dangerous one: solemn enough to parse as a real biomarker construct. The
-correction therefore remains explicit beside those phrases, and
-`summary.json` carries `measures` / `does_not_measure` so a script never has to
-read prose.
-
-**Narrative restraint.** The instrument reports observable aggregate behaviour
-and bounded derived conditions. "Post deletes elevated, blocks down" must not
-become "morning-after beef" or "users are deleting evidence". Those readings
-may be funny and even right, but the telemetry does not entail them. Humans
-may make the joke; the instrument must not certify it.
-
-## Temporal composition
-
-Composition V0 relates already-reduced source facts by bounded time windows,
-never by an actor or pseudonym. It propagates the weakest source coverage,
-admits only installed semantic rules, and attaches permitted and forbidden
-interpretations to every candidate claim. It does not ingest external sources,
-admit their evidence, or confer publication authority.
-
-The campaign contract and C0–C10 ledger are in
-[`docs/TEMPORAL-COMPOSITION.md`](docs/TEMPORAL-COMPOSITION.md). The boundary is
-shorter: **production observable, consumption unobservable**. Public writes do
-not measure reads, impressions, audience, attention, or engagement.
-Native metric candidates and the privacy tier each would require are tracked in
-[`docs/OBSERVATORY-ROADMAP.md`](docs/OBSERVATORY-ROADMAP.md).
-
-## Deployment
-
-The public site serves static output from a separate directory, with `noindex`
-at both the meta tag and response header. Public-safe deployment architecture,
-validation, rollback shape, and publication invariants live in
-[`deploy/README.md`](deploy/README.md); credentials, private host paths, and
-deployment authority do not. Publish with `./deploy/publish.sh`.
