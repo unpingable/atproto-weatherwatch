@@ -1,0 +1,83 @@
+{
+  "schema": "weatherwatch.composition.contracts/v1",
+  "contracts": [
+    {
+      "contract_id": "weatherwatch.jetstream.production.v1",
+      "producer_id": "weatherwatch.reducer.jetstream.v1",
+      "vantage_profile": "weatherwatch.vantage.named-jetstream-observer.v1",
+      "coverage_profile": "weatherwatch.profile.observation-coverage.v1",
+      "measurements": {
+        "atproto.public_record_writes": {
+          "semantic_profile": "atproto.semantic.public-record-writes.v1",
+          "unit": "count"
+        },
+        "atproto.block_record_writes": {
+          "semantic_profile": "atproto.semantic.block-record-writes.v1",
+          "unit": "count"
+        },
+        "atproto.active_actor_hll": {
+          "semantic_profile": "atproto.semantic.approximate-active-producers.v1",
+          "unit": "approximate_count"
+        }
+      },
+      "allowed_dimensions": {
+        "record_family": ["app_bsky", "other"]
+      }
+    },
+    {
+      "contract_id": "external.trends.search.v1",
+      "producer_id": "external.reducer.trends.v1",
+      "vantage_profile": "external.vantage.normalized-search-sample.v1",
+      "coverage_profile": "external.profile.trends-normalization.v1",
+      "measurements": {
+        "external.normalized_search_interest": {
+          "semantic_profile": "external.semantic.normalized-search-interest.v1",
+          "unit": "normalized_index"
+        }
+      },
+      "allowed_dimensions": {}
+    },
+    {
+      "contract_id": "labelwatch.issuance.v1",
+      "producer_id": "labelwatch.reducer.issuance.v1",
+      "vantage_profile": "labelwatch.vantage.declared-label-sources.v1",
+      "coverage_profile": "labelwatch.profile.issuance-coverage.v1",
+      "measurements": {
+        "labelwatch.label_issuance": {
+          "semantic_profile": "labelwatch.semantic.label-issuance.v1",
+          "unit": "count"
+        }
+      },
+      "allowed_dimensions": {}
+    },
+    {
+      "contract_id": "plc.directory.operations.v1",
+      "producer_id": "plc.reducer.operations.v1",
+      "vantage_profile": "plc.vantage.operation-log.v1",
+      "coverage_profile": "plc.profile.operation-log-coverage.v1",
+      "measurements": {
+            "plc.directory.operations": {
+              "semantic_profile": "plc.semantic.observed-operations.v1",
+              "unit": "count"
+            },
+            "plc.directory.creations": {
+              "semantic_profile": "plc.semantic.observed-creations.v1",
+              "unit": "count"
+            },
+            "plc.directory.tombstones": {
+              "semantic_profile": "plc.semantic.observed-tombstones.v1",
+              "unit": "count"
+            },
+            "plc.directory.endpoint_mutations": {
+              "semantic_profile": "plc.semantic.observed-endpoint-mutations.v1",
+              "unit": "count"
+            },
+            "plc.directory.migration_like_transitions": {
+              "semantic_profile": "plc.semantic.migration-like-endpoint-transitions.v1",
+              "unit": "count"
+            }
+      },
+      "allowed_dimensions": {}
+    }
+  ]
+}

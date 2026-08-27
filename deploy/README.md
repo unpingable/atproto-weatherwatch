@@ -15,17 +15,19 @@ that must be adapted by an authorised operator.
 |---|---|
 | collector | one named Jetstream endpoint; local SQLite |
 | field sealer | one content-addressed observation per window; adds no retention |
-| report | static `index.html`, `summary.json`, and `social.json` |
+| report | static observatory, permanent findings, `summary.json`, and `social.json` |
 | publisher | render → privacy gate → atomic directory swap |
 | canonical site | <https://weatherwatch.neutral.zone/> |
 | crawling | `noindex, nofollow, noarchive` in HTML and web-tier header |
 
-The page opens with **current conditions** — an icon, a state word, a plain
-sentence, the measurements behind it beside the inferences they do not
-license, and a recent-conditions strip — over a folded "receipts" deck holding
-the observation status, primitive rates, ratios, observation health, social
-episodes and run history. The conditions are read from the sealed field
-archive; they are not computed at publish time.
+The page opens with the latest published finding, then compact current weather
+from the named observer, explicit currentness/coverage status, recent findings,
+and a folded receipts deck holding observation status, primitive rates, ratios,
+observation health, social episodes and run history. Findings have permanent
+pages under `findings/` with versioned aggregate JSON receipts. A finding is a
+historical publication, not a substitute for current observation state. The
+conditions block is read from the sealed field archive; it is not computed at
+publish time.
 
 The former `/weatherwatch` path and `/beef` alias are redirects to the
 canonical host. Redirect configuration belongs to the serving environment;
@@ -47,6 +49,10 @@ configuration.
 - `deploy/systemd/weatherwatch-publish.timer` runs the publisher every five
   minutes.
 - `deploy/publish.sh` implements local or explicit remote publication.
+- `weatherwatch publication-gate` is the shared deterministic candidate gate
+  used by both `publish.sh` and `weatherwatch status`. Passing means only that
+  the local candidate is structurally complete and privacy-clean; it grants no
+  publication authority and does not prove the target changed.
 - `deploy/beef-route.caddy` documents the old path-matcher footgun; it is an
   illustrative fragment, not a complete live configuration.
 

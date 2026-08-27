@@ -1,4 +1,4 @@
-"""M7 — static dashboard generation."""
+"""Static observatory and finding generation."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from weatherwatch import db, report
+from weatherwatch import db, findings, report
 from weatherwatch import derive as derive_module
 from tests.conftest import SYNTH_BASE, SYNTH_ENDPOINT, build_run
 
@@ -62,6 +62,66 @@ def test_generates_from_synthetic_db(report_db, tmp_path):
     # reported as a window, marked unobserved -- see the test below.
     assert stats["windows"] == 10
     assert stats["html_bytes"] > 2000
+
+
+def test_generates_permanent_finding_and_machine_receipts(report_db, tmp_path):
+    out = tmp_path / "beef"
+    stats = report.generate_report(report_db, out)
+    root = out / "findings"
+    detail = root / findings.OBSERVER_DIVERGENCE_SLUG
+
+    assert stats["findings"] == 1
+    assert (detail / "index.html").exists()
+    index = json.loads((root / "index.json").read_text())
+    record = json.loads((detail / "finding.json").read_text())
+    receipt = json.loads((detail / "receipts" / "instances2.json").read_text())
+    assert index["schema"] == findings.SCHEMA_INDEX
+    assert record["schema"] == findings.SCHEMA_FINDING
+    assert receipt["schema"] == findings.SCHEMA_RECEIPT
+    assert record["finding_id"] == index["latest_finding_id"]
+    assert record["result"]["headline_ratio"] == pytest.approx(1.611)
+    assert receipt["same_instance_ratio_A_over_B"] == pytest.approx(1.0)
+
+    from weatherwatch.publication import evaluate_candidate
+    gate = evaluate_candidate(out)
+    assert gate["disposition"] == "PASSED"
+    assert gate["publication_authority"] is False
+    assert gate["files_scanned"] >= 8, "finding artifacts must be scanned too"
+
+
+def test_finding_page_keeps_result_receipts_and_refusal_adjacent(
+        report_db, tmp_path):
+    out = tmp_path / "beef"
+    report.generate_report(report_db, out)
+    detail = out / "findings" / findings.OBSERVER_DIVERGENCE_SLUG
+    page = (detail / "index.html").read_text()
+    assert "Jetstream observers disagree" in page
+    assert "7,088" in page and "4,400" in page
+    assert "1.611" in page and "1.000" in page
+    assert "does not establish coverage" in page
+    assert "no authoritative denominator" in page
+    assert 'href="finding.json"' in page
+    assert 'href="receipts/instances2.json"' in page
+    assert page.index("1.611") < page.index("does not establish coverage")
+    assert page.index("does not establish coverage") < page.index('id="receipts"')
+
+
+def test_historical_finding_is_not_refreshed_by_report_generation(
+        report_db, tmp_path):
+    early = tmp_path / "early"
+    late = tmp_path / "late"
+    report.generate_report(
+        report_db, early,
+        now=datetime.datetime(2026, 8, 20, tzinfo=datetime.timezone.utc))
+    report.generate_report(
+        report_db, late,
+        now=datetime.datetime(2026, 8, 26, tzinfo=datetime.timezone.utc))
+    rel = Path("findings") / findings.OBSERVER_DIVERGENCE_SLUG
+    assert (early / rel / "finding.json").read_bytes() == (
+        late / rel / "finding.json").read_bytes()
+    record = json.loads((late / rel / "finding.json").read_text())
+    assert record["published_month"] == "2026-08"
+    assert "generated_at" not in record
 
 
 def test_generates_from_live_db_if_present(tmp_path):
@@ -124,6 +184,22 @@ def test_exact_observation_source_appears(report_db, tmp_path):
     assert SYNTH_ENDPOINT in html
     summary = json.loads((out / "summary.json").read_text())
     assert summary["source_endpoint"] == SYNTH_ENDPOINT
+    assert summary["latest_finding"]["finding_id"] == (
+        findings.OBSERVER_DIVERGENCE_ID)
+    assert summary["latest_finding"]["path"].endswith(
+        "/observer-divergence-2026-08/")
+
+
+def test_compact_weather_is_explicitly_conditioned_on_the_observer(
+        report_db, tmp_path):
+    out = tmp_path / "beef"
+    report.generate_report(report_db, out)
+    html = read_html(out)
+    now = html[html.index('id="network-now"'):html.index("Current conditions")]
+    assert SYNTH_ENDPOINT in now
+    assert "not a network total" in now
+    assert "Coverage" in now and "conditioned" in now
+    assert all(label in now for label in ("Posts", "Replies", "Post deletes"))
 
 
 def test_freshness_and_interval_are_legible_near_the_top(report_db, tmp_path):
@@ -136,6 +212,7 @@ def test_freshness_and_interval_are_legible_near_the_top(report_db, tmp_path):
     assert summary["freshness"]["state"] == "current"
     assert "newest complete observation" in html_doc
     assert "Report interval:" in html_doc
+    assert 'status-present">PRESENT</span>' in html_doc
     assert html_doc.index("data-freshness") < html_doc.index(
         "A · Observation status")
 
@@ -151,7 +228,9 @@ def test_partial_freshness_is_not_presented_as_current(conn, tmp_path):
     report.generate_report(conn, out, now=now)
     summary = json.loads((out / "summary.json").read_text())
     assert summary["freshness"]["state"] == "partial"
-    assert 'data-freshness="partial"' in read_html(out)
+    html_doc = read_html(out)
+    assert 'data-freshness="partial"' in html_doc
+    assert 'status-degraded">DEGRADED</span>' in html_doc
 
 
 def test_stale_and_unavailable_are_explicit(report_db, tmp_path):
@@ -161,7 +240,9 @@ def test_stale_and_unavailable_are_explicit(report_db, tmp_path):
     report.generate_report(report_db, out, now=stale_now)
     summary = json.loads((out / "summary.json").read_text())
     assert summary["freshness"]["state"] == "stale"
-    assert 'data-freshness="stale"' in read_html(out)
+    html_doc = read_html(out)
+    assert 'data-freshness="stale"' in html_doc
+    assert 'status-stale">STALE</span>' in html_doc
 
     unavailable = report._freshness(
         [], "2026-01-01T00:00:00Z", bucket_width=60)
@@ -251,13 +332,16 @@ def test_beef_index_is_a_disabled_placeholder(report_db, tmp_path):
 
 # --- self-containment and privacy ------------------------------------------
 
-def test_no_external_resources_or_links(report_db, tmp_path):
+def test_no_external_resources_and_only_local_navigation(report_db, tmp_path):
     out = tmp_path / "beef"
     report.generate_report(report_db, out)
     html = read_html(out)
     assert "<script" not in html
     assert "<link" not in html
-    assert "<a " not in html and "href=" not in html
+    hrefs = re.findall(r'href="([^"]+)"', html)
+    assert hrefs, "the finding and its receipts should be navigable"
+    assert all(not href.startswith(("http://", "https://", "//"))
+               for href in hrefs)
     assert "<iframe" not in html
     # The only // occurrences may be the observation endpoint itself.
     for m in re.findall(r"(?:https?:)?//[^\s\"'<>)]+", html):
@@ -282,10 +366,12 @@ IDENTITY_PATTERNS = {
 def test_no_identity_in_generated_artifacts(report_db, tmp_path):
     out = tmp_path / "beef"
     report.generate_report(report_db, out)
-    for name in ("index.html", "summary.json"):
-        text = (out / name).read_text()
+    for path in sorted(p for p in out.rglob("*") if p.is_file()
+                       and p.suffix in {".html", ".json"}):
+        text = path.read_text()
         for label, pat in IDENTITY_PATTERNS.items():
-            assert not re.search(pat, text, re.I), f"{label} leaked into {name}"
+            assert not re.search(pat, text, re.I), (
+                f"{label} leaked into {path.relative_to(out)}")
 
 
 def test_live_report_has_no_identity(tmp_path):
@@ -438,7 +524,8 @@ def test_unsaturated_lag_keeps_its_precision(conn, tmp_path):
     html = read_html(out)
     assert "0.013s" in html or "0.012s" in html
     assert "≥600s" not in html
-    assert "clamp" not in html, "no cap note when nothing is saturated"
+    body = html.split("</style>", 1)[1]
+    assert "clamp" not in body, "no cap note when nothing is saturated"
 
 
 def test_condition_badges_stay_non_authoritative(report_db, tmp_path):
@@ -1096,7 +1183,7 @@ def test_page_denies_the_specific_misreadings(report_db, tmp_path):
     report.generate_report(report_db, out)
     low = prose(out).lower()
     for claim in ("no account identifiers", "no social graph",
-                  "read no post text", "detect no dispute"):
+                  "reads no post text", "detects no dispute"):
         assert claim in low, f"missing denial: {claim!r}"
     assert "not claimed anonymous" in low
     assert "joke name for a composite that does not exist" in low
@@ -1192,7 +1279,9 @@ def test_share_metadata_does_not_weaken_the_dark_posture(report_db, tmp_path):
     assert 'content="noindex,nofollow,noarchive"' in html_doc, (
         "share tags govern unfurling, not crawling; noindex still stands"
     )
-    assert "<a " not in html_doc and "href=" not in html_doc
+    hrefs = re.findall(r'href="([^"]+)"', html_doc)
+    assert all(not href.startswith(("http://", "https://", "//"))
+               for href in hrefs), "navigation must remain within the artifact"
     # every absolute URL in the head must be our own canonical origin
     import re as _re
     for m in _re.findall(r'content="(https?://[^"]+)"', html_doc):

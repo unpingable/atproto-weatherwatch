@@ -1,4 +1,4 @@
-"""M7 — static dark dashboard.
+"""Static Weather Watch observatory and finding publication.
 
 Plain HTML plus inline SVG. No framework, no CDN, no JavaScript application,
 no external requests of any kind. Output is a directory that can be served by
@@ -28,7 +28,8 @@ import shutil
 import sqlite3
 from pathlib import Path
 
-from . import COLLECTOR_VERSION, archive, db, derive, health, query, timeutil
+from . import (COLLECTOR_VERSION, archive, db, derive, findings, health, query,
+               timeutil)
 from .query import Series, WindowPoint
 from .social import section as _social_section
 from .social import api as _social_api
@@ -178,6 +179,7 @@ STYLE = """
 :root {
   --font-sans: system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",
                Arial,"Noto Sans",sans-serif;
+  --font-serif: Georgia,"Times New Roman",Times,serif;
   --font-mono: ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
   --bg:#f4f5f7; --panel:#ffffff; --ink:#15181e; --muted:#666d7c;
   --rule:#e0e3e9; --accent:#2f6094;
@@ -237,6 +239,108 @@ h1 .mark { color:var(--accent); }
          max-width:78ch; }
 .scope strong { color:var(--ink); }
 
+/* --- observatory front page -------------------------------------------- */
+.mast.observatory { border:0; margin:0; padding:10px 0 26px; }
+.brand-kicker { margin:0; color:var(--accent); font-size:12px; font-weight:760;
+                letter-spacing:.15em; text-transform:uppercase; }
+.brand-title { margin:5px 0 0; font:700 clamp(30px,5vw,52px)/1
+               var(--font-serif); letter-spacing:-.035em; }
+.brand-line { margin:10px 0 0; color:var(--muted); font-size:16px;
+              line-height:1.45; }
+.brand-line strong { color:var(--ink); font-weight:650; }
+.brand-boundary { margin:5px 0 0; color:var(--ink); font-size:13px;
+                  font-weight:680; letter-spacing:.015em; }
+
+.finding-hero { border-top:2px solid var(--ink); border-bottom:1px solid var(--ink);
+                padding:20px 0 26px; }
+.section-eyebrow { display:flex; justify-content:space-between; gap:18px;
+                   align-items:baseline; color:var(--muted); font-size:11px;
+                   font-weight:730; letter-spacing:.11em; text-transform:uppercase; }
+.finding-title { max-width:19ch; margin:17px 0 8px;
+                 font:700 clamp(30px,5.2vw,58px)/1.02 var(--font-serif);
+                 letter-spacing:-.035em; text-transform:uppercase; }
+.finding-claim { max-width:64ch; margin:0; color:var(--muted);
+                 font-size:17px; line-height:1.55; }
+.finding-layout { display:grid; grid-template-columns:minmax(0,1fr) minmax(230px,.52fr);
+                  gap:clamp(28px,6vw,78px); align-items:center; margin-top:26px; }
+.observer-bars { display:grid; gap:13px; }
+.observer-row { display:grid; grid-template-columns:minmax(145px,.7fr) minmax(120px,1fr) 3.2em;
+                gap:12px; align-items:center; }
+.observer-name { font:12px/1.25 var(--font-mono); color:var(--muted); }
+.observer-track { height:13px; background:var(--rule); }
+.observer-fill { display:block; height:100%; background:var(--accent); }
+.observer-row:nth-child(2) .observer-fill { opacity:.68; }
+.observer-relative { text-align:right; font:650 13px var(--font-mono); }
+.finding-result { border-left:1px solid var(--rule); padding-left:28px; }
+.finding-number { font:700 clamp(44px,7vw,78px)/.9 var(--font-serif);
+                  letter-spacing:-.055em; }
+.finding-number-label { margin-top:10px; color:var(--muted); font-size:12px;
+                        letter-spacing:.08em; text-transform:uppercase; }
+.control { margin-top:18px; font-size:13px; }
+.finding-implication { max-width:68ch; margin:24px 0 0; font-size:18px;
+                       line-height:1.45; }
+.finding-actions, .text-links { display:flex; flex-wrap:wrap; gap:9px 18px;
+                               margin-top:20px; }
+.action { display:inline-block; padding:8px 13px; border:1px solid var(--ink);
+          color:var(--ink); text-decoration:none; font-size:13px; font-weight:650; }
+.action:hover { background:var(--ink); color:var(--panel); }
+.action.secondary { border-color:var(--rule); color:var(--accent); }
+
+.editorial-section { margin-top:42px; padding-top:18px; border-top:1px solid var(--ink); }
+.editorial-heading { display:flex; justify-content:space-between; align-items:baseline;
+                     gap:18px; margin-bottom:16px; }
+.editorial-heading h2 { margin:0; color:var(--ink); font-size:13px; }
+.conditioned-source { color:var(--muted); font-size:12px; text-align:right; }
+.now-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr));
+            border:1px solid var(--rule); background:var(--rule); gap:1px; }
+.now-metric { background:var(--panel); padding:16px; min-width:0; }
+.now-label { color:var(--muted); font-size:12px; }
+.now-value { margin:4px 0 7px; font:650 clamp(25px,4vw,39px)/1 var(--font-mono);
+             letter-spacing:-.045em; }
+.now-unit { font:12px var(--font-sans); color:var(--muted); letter-spacing:0; }
+.now-foot { color:var(--muted); font-size:11px; }
+.status-line { display:flex; flex-wrap:wrap; gap:10px 22px; align-items:center;
+               margin:13px 0; padding:11px 0; border-bottom:1px solid var(--rule); }
+.status-item { display:flex; align-items:center; gap:8px; font-size:12px; }
+.status-label { color:var(--muted); }
+.status-chip { display:inline-block; border:1px solid currentColor; border-radius:999px;
+               padding:2px 8px; font-size:10px; font-weight:780; letter-spacing:.08em; }
+.status-present { color:var(--ok); }
+.status-degraded, .status-refused { color:var(--degraded); }
+.status-stale { color:var(--loss); }
+.status-unknown, .status-absent { color:var(--muted); }
+
+.finding-list { border-top:1px solid var(--rule); }
+.finding-list a { display:grid; grid-template-columns:minmax(0,1fr) auto;
+                  gap:18px; padding:14px 2px; border-bottom:1px solid var(--rule);
+                  color:var(--ink); text-decoration:none; }
+.finding-list a:hover .finding-list-title { color:var(--accent); }
+.finding-list-title { font-family:var(--font-serif); font-size:17px; }
+.finding-list-result { font:650 14px var(--font-mono); }
+.how-read { max-width:78ch; font-size:18px; line-height:1.55; }
+.how-read strong { font-weight:700; }
+
+/* The permanent finding is a paper, not a second dashboard. */
+.paper { max-width:850px; margin:0 auto; }
+.paper-nav { margin-bottom:35px; font-size:13px; }
+.paper-nav a { color:var(--accent); }
+.paper-lead { font:22px/1.48 var(--font-serif); max-width:62ch; }
+.paper-section { margin-top:38px; padding-top:18px; border-top:1px solid var(--rule); }
+.paper-section h2 { margin:0 0 12px; color:var(--ink); font-size:12px; }
+.paper-section p, .paper-section li { max-width:72ch; }
+.paper-table td:first-child { font-family:var(--font-mono); }
+.paper-caveat { border-left:3px solid var(--partial); padding:3px 0 3px 15px; }
+
+@media (max-width:720px) {
+  .finding-layout { grid-template-columns:1fr; }
+  .finding-result { border-left:0; border-top:1px solid var(--rule);
+                    padding:20px 0 0; }
+  .observer-row { grid-template-columns:minmax(110px,.8fr) minmax(80px,1fr) 3em; }
+  .now-grid { grid-template-columns:1fr; }
+  .conditioned-source { text-align:left; }
+  .editorial-heading { display:block; }
+}
+
 h2 { font-family:var(--font-sans); font-size:11.5px; text-transform:uppercase;
      letter-spacing:.11em; color:var(--muted); margin:30px 0 10px;
      font-weight:700; }
@@ -261,11 +365,8 @@ h3 { font-size:15px; margin:0 0 6px; font-weight:650; }
   .kv dt { margin-top:9px; }
   body { padding:16px 14px 30px; }
   h1 { font-size:21px; }
-  /* The masthead must not push the reading off a phone screen. The denial
-     stays above the weather — it is the most misread thing about this
-     project — but it does not need desktop leading to do that. Measured: the
-     state headline was landing around 640px on a 390px viewport, i.e. at or
-     below the fold on a common phone. */
+  /* The masthead must not push the finding off a phone screen. Labels and
+     supporting scope text do not need desktop leading to remain legible. */
   .tagline { font-size:13px; }
   .scope { font-size:12.5px; line-height:1.5; padding:10px 12px; }
   .mast { padding-bottom:9px; margin-bottom:12px; }
@@ -473,11 +574,11 @@ HATCH_DEF = """
 #: context a reader gets, it is cached by whoever unfurls it, and it is seen by
 #: people who never open the page — so the denial has to be on the card, not
 #: just behind the link.
-SHARE_TITLE = "weatherwatch — platform weather"
+SHARE_TITLE = "Jetstream observers disagree: 1.61× — Weather Watch"
 SHARE_DESCRIPTION = (
-    "Aggregate ATProto event rates and observation health, observed from one "
-    "named Jetstream source. Does not measure conflict, sentiment, users, or "
-    "content."
+    "A controlled concurrent probe found 1.61× different post volumes from "
+    "same-region public observers; self-control was 1.000×. Weather Watch "
+    "does not measure conflict, sentiment, users, or content."
 )
 #: Static image, never regenerated with live figures: a share card outlives
 #: the numbers on it, and a cached card showing stale rates would mislead.
@@ -653,7 +754,8 @@ def _station_bar(freshness: dict, latest, generated_at: str) -> str:
 </div>"""
 
 
-def _receipt(title: str, hint: str, body: str, open_: bool = False) -> str:
+def _receipt(title: str, hint: str, body: str, open_: bool = False,
+             id_: str | None = None) -> str:
     """One collapsible section of the receipts deck.
 
     Progressive disclosure, not deletion: every figure that was on the page
@@ -664,7 +766,8 @@ def _receipt(title: str, hint: str, body: str, open_: bool = False) -> str:
     # The title is a real heading, not a bold span. A reader navigating by
     # heading should be able to reach every section of the deck; `<h3>` inside
     # `<summary>` is valid and keeps the disclosure keyboard-operable.
-    return (f'<details class="rc"{" open" if open_ else ""}>'
+    anchor = f' id="{_esc(id_)}"' if id_ else ""
+    return (f'<details class="rc"{anchor}{" open" if open_ else ""}>'
             f'<summary><h3>{_esc(title)}</h3>'
             f'<span class="hint">{_esc(hint)}</span></summary>'
             f'<div class="body">{body}</div></details>')
@@ -1207,24 +1310,293 @@ def _section_beef() -> str:
 </div>"""
 
 
+# --- observatory front page -----------------------------------------------
+
+FRESHNESS_STATUS = {
+    "current": "PRESENT",
+    "partial": "DEGRADED",
+    "stale": "STALE",
+    "unavailable": "UNKNOWN",
+}
+
+
+def _status_chip(state: str) -> str:
+    css = state.lower().replace("_", "-")
+    return (f'<span class="status-chip status-{_esc(css)}">'
+            f'{_esc(state)}</span>')
+
+
+def _quality_status(quality: str | None) -> str:
+    if quality in {"clean", "seam", "lagged", "recovering"}:
+        return "PRESENT"
+    if quality in {"gap", "loss", "degraded", "partial"}:
+        return "DEGRADED"
+    return "UNKNOWN"
+
+
+def _compact_rate(rate_per_s: float | None) -> str:
+    if rate_per_s is None:
+        return "—"
+    per_minute = rate_per_s * 60
+    if abs(per_minute) >= 1_000_000:
+        return f"{per_minute / 1_000_000:.1f}m"
+    if abs(per_minute) >= 1_000:
+        return f"{per_minute / 1_000:.1f}k"
+    if abs(per_minute) >= 100:
+        return f"{per_minute:,.0f}"
+    return f"{per_minute:,.1f}"
+
+
+def _latest_point(series_map: dict[str, Series], metric: str) -> WindowPoint | None:
+    series = series_map.get(metric)
+    return series.points[-1] if series and series.points else None
+
+
+def _finding_figure() -> str:
+    finding = findings.observer_divergence()
+    result = finding["result"]
+    return f"""<div class="finding-layout" role="group"
+ aria-label="Observed posts in one concurrent 120-second interval">
+  <div class="observer-bars">
+    <div class="observer-row">
+      <span class="observer-name">jetstream1.us-east</span>
+      <span class="observer-track"><span class="observer-fill" style="width:100%"></span></span>
+      <span class="observer-relative">1.00</span>
+    </div>
+    <div class="observer-row">
+      <span class="observer-name">jetstream2.us-east</span>
+      <span class="observer-track"><span class="observer-fill" style="width:62.1%"></span></span>
+      <span class="observer-relative">0.62</span>
+    </div>
+    <p class="note">7,088 vs 4,400 post events delivered. Same host, same
+    120-second wall-clock interval; higher volume is not labelled truth.</p>
+  </div>
+  <div class="finding-result">
+    <div class="finding-number">{_esc(result['display_ratio'])}</div>
+    <div class="finding-number-label">observed difference</div>
+    <div class="control">Same-observer control:
+      <strong class="mono">{_esc(result['display_control_ratio'])}</strong></div>
+  </div>
+</div>"""
+
+
+def _latest_finding() -> str:
+    finding = findings.observer_divergence()
+    slug = finding["slug"]
+    return f"""<section class="finding-hero" id="latest-finding">
+  <div class="section-eyebrow"><span>Latest finding</span><time>Aug 2026</time></div>
+  <h2 class="finding-title">{_esc(finding['headline'])}</h2>
+  <p class="finding-claim">{_esc(finding['claim'])}</p>
+  {_finding_figure()}
+  <p class="finding-implication">Your firehose study may not have a stable
+  denominator: observed volume depended on observer choice in this probe.</p>
+  <div class="finding-actions">
+    <a class="action" href="findings/{_esc(slug)}/">Read the finding</a>
+    <a class="action secondary" href="findings/{_esc(slug)}/#receipts">See the receipts</a>
+  </div>
+</section>"""
+
+
+def _network_now(series_map: dict[str, Series], health_points,
+                 latest, freshness: dict, generated_at: str) -> str:
+    cards = []
+    for label, metric in (("Posts", "post.create"),
+                          ("Replies", "post.create.reply"),
+                          ("Post deletes", "post.delete")):
+        point = _latest_point(series_map, metric)
+        points = list(series_map[metric].points[-1440:])
+        quality = point.quality if point else "unobserved"
+        value = _compact_rate(point.rate if point else None)
+        cards.append(f"""<div class="now-metric">
+  <div class="now-label">{_esc(label)}</div>
+  <div class="now-value">{_esc(value)} <span class="now-unit">/ min</span></div>
+  {_sparkline(points, label=f'{label} observed rate')}
+  <div class="now-foot">latest source window · {_esc(quality)}</div>
+</div>""")
+
+    newest_health = health_points[-1] if health_points else None
+    quality = newest_health.quality if newest_health else None
+    observation_state = FRESHNESS_STATUS[freshness["state"]]
+    coverage_state = _quality_status(quality)
+    return f"""<section class="editorial-section" id="network-now">
+  <div class="editorial-heading">
+    <h2>Network weather — now</h2>
+    <div class="conditioned-source">Observed at
+      <span class="mono">{_esc(latest.endpoint)}</span> · not a network total</div>
+  </div>
+  <div class="now-grid">{''.join(cards)}</div>
+  <div class="status-line">
+    <div class="status-item"><span class="status-label">Observation</span>
+      {_status_chip(observation_state)}</div>
+    <div class="status-item"><span class="status-label">Coverage</span>
+      {_status_chip(coverage_state)} <span>conditioned · latest window:
+      {_esc(quality or 'unobserved')}</span></div>
+  </div>
+  {_station_bar(freshness, latest, generated_at)}
+</section>"""
+
+
+def _recent_findings() -> str:
+    slug = findings.OBSERVER_DIVERGENCE_SLUG
+    return f"""<section class="editorial-section" id="recent-findings">
+  <div class="editorial-heading"><h2>Recent findings</h2></div>
+  <div class="finding-list">
+    <a href="findings/{slug}/"><span class="finding-list-title">Observer divergence</span>
+      <span class="finding-list-result">1.61×</span></a>
+    <a href="findings/{slug}/#continuity"><span class="finding-list-title">Reconnect monotonicity did not imply completeness</span>
+      <span class="finding-list-result">0 decreasing</span></a>
+    <a href="findings/{slug}/#cursor-resume"><span class="finding-list-title">Cursor T+1 produced exact continuation</span>
+      <span class="finding-list-result">6/6 trials</span></a>
+  </div>
+</section>"""
+
+
+def _how_to_read() -> str:
+    slug = findings.OBSERVER_DIVERGENCE_SLUG
+    return f"""<section class="editorial-section" id="how-to-read">
+  <div class="editorial-heading"><h2>How to read this</h2></div>
+  <p class="how-read"><strong>Weather Watch measures what its named observer
+  saw.</strong> It does not claim that any observer sees “the network.” It
+  counts aggregate ATProto events and keeps no people. It retains no raw
+  events, publishes no account identifiers, keeps no social graph, reads no
+  post text, detects no dispute, and retains no event-level comparison set.</p>
+  <p class="how-read"><strong>Production observable. Consumption
+  unobservable.</strong> The stream contains public writes, not reads,
+  impressions, lurkers, private messages, reports, client-side mutes, actual
+  audience, or attention. Activity is not engagement.</p>
+  <p class="scope"><strong>It does not measure conflict, sentiment, users, or
+  content.</strong> Disclosure-limited social periods are not claimed
+  anonymous. <em>Global Beef Index</em> is a joke name for a composite that
+  does not exist. Cortisol accounting for the ATProto firehose — event
+  velocity, not affect.</p>
+  <div class="text-links">
+    <a href="findings/{slug}/#method">Method</a>
+    <a href="#coverage">Coverage</a>
+    <a href="#definitions">Definitions</a>
+    <a href="#source">Source</a>
+  </div>
+</section>"""
+
+
+def _finding_share_meta(public_url: str | None, finding: dict) -> str:
+    if not public_url:
+        return ""
+    base = public_url.rstrip("/")
+    url = f"{base}/findings/{finding['slug']}/"
+    title = f"{finding['headline']} {finding['result']['display_ratio']} — Weather Watch"
+    description = finding["claim"] + " " + finding["implication"]
+    return f"""
+<meta name="description" content="{_esc(description)}">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="Weather Watch">
+<meta property="og:title" content="{_esc(title)}">
+<meta property="og:description" content="{_esc(description)}">
+<meta property="og:url" content="{_esc(url)}">
+<meta property="og:image" content="{_esc(base + '/og-card.png')}">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="{_esc(title)}">
+<meta name="twitter:description" content="{_esc(description)}">"""
+
+
+def _finding_page(public_url: str | None) -> str:
+    finding = findings.observer_divergence()
+    return f"""<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow,noarchive">
+<title>Jetstream observers disagree · Weather Watch</title>
+{_finding_share_meta(public_url, finding)}
+<style>{STYLE}</style>
+</head><body><main class="paper">
+<nav class="paper-nav"><a href="../../">← Weather Watch</a></nav>
+<header>
+  <div class="section-eyebrow"><span>Weather Watch finding</span><time>Aug 2026</time></div>
+  <h1 class="finding-title">{_esc(finding['headline'])}</h1>
+  <p class="paper-lead">{_esc(finding['claim'])}</p>
+</header>
+{_finding_figure()}
+<p class="finding-implication">{_esc(finding['implication'])}</p>
+
+<section class="paper-section" id="result"><h2>Result</h2>
+<p>Over the concurrent interval, <span class="mono">jetstream1.us-east</span>
+delivered <strong>7,088</strong> post events and each of two independent
+<span class="mono">jetstream2.us-east</span> sockets delivered
+<strong>4,400</strong>. The cross-observer ratio was
+<strong>1.611</strong>; the two same-observer sockets agreed at
+<strong>1.000</strong>.</p>
+</section>
+
+<section class="paper-section" id="method"><h2>Design and method</h2>
+<p>On 2026-08-08, the probe opened four concurrent, post-filtered public
+Jetstream connections from one host for the same 120-second wall-clock
+interval. Counts lived only in memory and the probe wrote aggregate results;
+it had no event writer, database, resolver, or identity-bearing comparison
+set.</p>
+<div class="scroll"><table class="paper-table"><thead><tr><th>observer</th>
+<th>connections</th><th>posts observed</th></tr></thead><tbody>
+<tr><td>jetstream2.us-east</td><td class="num">2</td><td class="num">4,400 each</td></tr>
+<tr><td>jetstream1.us-east</td><td class="num">1</td><td class="num">7,088</td></tr>
+<tr><td>jetstream1.us-west</td><td class="num">1</td><td class="num">6,928</td></tr>
+</tbody></table></div>
+</section>
+
+<section class="paper-section" id="limitations"><h2>Limitations</h2>
+<p class="paper-caveat"><strong>This does not establish coverage,
+completeness, set inclusion, or which observer was closer to network
+truth.</strong> There was no authoritative denominator. The higher-volume
+stream may have been a superset, the sets may have partially overlapped, or
+one observer may have been temporarily degraded.</p>
+<p>Proving set equality would require retaining per-event identity across
+observers. Weather Watch refuses that collection, correctly, and this finding
+does not weaken the boundary. Equal aggregate counts are not evidence of
+identical event sets.</p>
+</section>
+
+<section class="paper-section" id="continuity"><h2>Related instrument result: continuity</h2>
+<p>A deliberately interrupted survey retained strictly monotonic
+<span class="mono">time_us</span> across a known gap: zero timestamps
+decreased. Monotonic cursor time therefore did <strong>not</strong> imply
+complete observation. Weather Watch records gaps separately.</p>
+</section>
+
+<section class="paper-section" id="cursor-resume"><h2>Related instrument result: cursor resume</h2>
+<p>Across 6/6 trials, resuming with <span class="mono">cursor=T+1</span>
+produced exact continuation at the tested boundary. That supports the local
+resume mechanism; it does not refresh a historical observation or establish
+relay completeness.</p>
+</section>
+
+<section class="paper-section" id="receipts"><h2>Receipts and reproduction</h2>
+<p>The public artifacts are aggregate and identity-free:</p>
+<div class="text-links">
+  <a href="finding.json">Finding record (JSON)</a>
+  <a href="receipts/instances2.json">Aggregate probe receipt (JSON)</a>
+</div>
+<p>Repository reproduction record:
+<span class="mono">python3 spike/m0_probe.py control</span>. The surrounding
+analysis is in <span class="mono">M0-VERIFICATION-RESULTS.md</span> and
+<span class="mono">docs/JETSTREAM-OBSERVER-DIVERGENCE.md</span>. Running the
+probe contacts public infrastructure and produces a new observation; the
+published receipt is not silently refreshed by later report generation.</p>
+</section>
+
+<footer>Finding <span class="mono">{_esc(finding['finding_id'])}</span> ·
+aggregate counts only · no raw events · no account identifiers.</footer>
+</main></body></html>"""
+
+
 # --- assembly --------------------------------------------------------------
 
 def _build_html(conn, run_ids, runs, latest, series_map, totals_series,
                 health_points, metric_totals, generated_at,
                 public_url, social_projection=None, freshness=None,
                 conditions=None, field_obs=None, field_clim=None) -> str:
-    """Assemble the page as two decks.
+    """Assemble a finding-led observatory with its receipts underneath.
 
-    **The reading**, which a visitor came for: what the conditions are, why the
-    instrument says so, what it refuses to say, and whether the number is
-    current. **The receipts**, which are why the reading can be believed: the
-    primitives it is built on, the observation's own health, and the run
-    history. Everything that was on this page before is still on it. The
-    change is that the paperwork no longer has to be read first.
-
-    The negative scope statement stays in the masthead, above both decks,
-    because it is the single most misread thing about this project and a
-    reader who bounces after four seconds should still have met it.
+    The page answers, in order: what did we learn, what did this named observer
+    see now, how conditioned is that observation, and where are the receipts.
+    All of the prior diagnostic material remains available below that reading.
     """
     first = min((point.bucket_start for point in health_points), default=None)
     last = max((point.bucket_start + point.bucket_width for point in health_points),
@@ -1265,28 +1637,20 @@ def _build_html(conn, run_ids, runs, latest, series_map, totals_series,
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="robots" content="noindex,nofollow,noarchive">
-<title>weatherwatch · platform weather</title>{_share_meta(public_url)}
+<title>Weather Watch · aggregate ATProto telemetry</title>{_share_meta(public_url)}
 <style>{STYLE}</style>
 </head><body><div class="wrap">
 
-<header class="mast"><div class="mast-grid">
-<div>
-<h1><span class="mark">weatherwatch</span> · platform weather</h1>
-<p class="tagline">A weather station pointed at the public ATProto firehose.
-It reports what the network is <em>doing</em> — how fast events are happening,
-and how well they are being observed.</p>
-</div>
-<p class="scope"><strong>Despite the name, this does not measure conflict,
-sentiment, users, or content.</strong> It counts how fast aggregate ATProto
-events occur — posts, likes, follows, blocks, deletes — and how well it is
-observing them. Public artifacts contain no account identifiers, no social
-graph, read no post text, and detect no dispute. Disclosure-limited social
-periods are not claimed anonymous. <em>Global Beef Index</em> is a joke name
-for a composite that does not exist. Cortisol accounting for the ATProto
-firehose — event velocity, not affect.</p>
-</div></header>
+<header class="mast observatory">
+  <p class="brand-kicker">Weather Watch</p>
+  <h1 class="brand-title">Aggregate ATProto telemetry.</h1>
+  <p class="brand-line">Counts the weather, <strong>keeps no people.</strong></p>
+  <p class="brand-boundary">Production observable. Consumption unobservable.</p>
+</header>
 
-{_station_bar(freshness, latest, generated_at)}
+{_latest_finding()}
+
+{_network_now(series_map, health_points, latest, freshness, generated_at)}
 <p class="note">Observed from <span class="mono">{_esc(latest.endpoint)}</span>
 over {_esc(_clock(_iso(first * 1_000_000 if first is not None else None)))}
 → {_esc(_clock(_iso(last * 1_000_000 if last is not None else None)))}.
@@ -1295,7 +1659,10 @@ network's total activity, and no relay is authoritative or complete.</p>
 
 {reading}
 
-<div class="deck">
+{_recent_findings()}
+{_how_to_read()}
+
+<div class="deck" id="receipts">
 <h2 class="deck-title">The receipts</h2>
 <p class="sub">Everything the reading above is built from, and everything
 needed to disbelieve it: the primitive rates, the ratios, the health of the
@@ -1317,15 +1684,17 @@ denominator.</p>
           f"{len(runs)} run{'' if len(runs) == 1 else 's'} · "
           f"{len(health_points)} windows",
           _freshness_panel(freshness, first, last)
-          + _section_status(runs, health_points, latest, metric_totals))}
+          + _section_status(runs, health_points, latest, metric_totals),
+          id_="observation-status")}
 {_receipt("B · Activity weather",
           "16 primitive event rates, each with its own per-window series",
-          _section_weather(series_map), open_=True)}
+          _section_weather(series_map), open_=True, id_="source")}
 {_receipt("C · Derived conditions", c_hint,
-          _section_conditions(conn, run_ids, series_map, totals_series))}
+          _section_conditions(conn, run_ids, series_map, totals_series),
+          id_="definitions")}
 {_receipt("D · Observation health",
           f"{len(health_points)} windows · mostly {_esc(dominant[0])}",
-          _section_health_strip(health_points), open_=True)}
+          _section_health_strip(health_points), open_=True, id_="coverage")}
 {_receipt(_social_section.TITLE, e_hint,
           _social_section.render(social_projection))
  if social_projection else ""}
@@ -1352,6 +1721,7 @@ def _summary_json(runs, latest, series_map, totals_series, health_points,
     observed_s = sum(p.observed_seconds for p in health_points if p.observed)
     freshness = freshness or _freshness(
         health_points, generated_at, latest.bucket_width)
+    published_finding = findings.observer_divergence()
     return {
         # `summary.json` carried no schema at all until v2, which left a
         # consumer no way to notice that `windows` had become bounded.
@@ -1372,6 +1742,18 @@ def _summary_json(runs, latest, series_map, totals_series, health_points,
         # the limit cannot be dropped by consuming the JSON instead of the
         # page.
         "conditions": conditions or None,
+        # A stable discovery link, not a claim that this historical finding
+        # is a current observation. Its own publication month and status are
+        # carried explicitly; report regeneration never refreshes them.
+        "latest_finding": {
+            "finding_id": published_finding["finding_id"],
+            "slug": published_finding["slug"],
+            "status": published_finding["status"],
+            "published_month": published_finding["published_month"],
+            "headline": published_finding["headline"],
+            "display_result": published_finding["result"]["display_ratio"],
+            "path": f"findings/{published_finding['slug']}/",
+        },
         "collector_version": COLLECTOR_VERSION,
         "claim": ("Aggregate activity observed from this Jetstream source "
                   "during the stated observation interval."),
@@ -1381,6 +1763,8 @@ def _summary_json(runs, latest, series_map, totals_series, health_points,
         "does_not_measure": [
             "conflict or disputes", "sentiment or affect", "individual users",
             "post content or text", "the social graph", "any identity",
+            "reads, impressions, or lurkers", "private messages or reports",
+            "client-side mutes", "actual audience, attention, or engagement",
         ],
         "source_endpoint": latest.endpoint,
         "runs": [
@@ -1530,7 +1914,7 @@ def generate_report(
     social_db: str | Path | None = None,
     social_window: str | None = "48h",
 ) -> dict:
-    """Render the dashboard into `out_dir`, atomically.
+    """Render the observatory and finding pages into `out_dir`, atomically.
 
     Without `run_ids`, uses the most recent compatible sequence of runs on the
     endpoint of the latest run — never a mixture of endpoints.
@@ -1597,6 +1981,10 @@ def generate_report(
         shutil.rmtree(tmp)
     tmp.mkdir(parents=True)
     (tmp / "index.html").write_text(html_doc, encoding="utf-8")
+    finding_stats = findings.write_artifacts(tmp)
+    finding_dir = tmp / "findings" / findings.OBSERVER_DIVERGENCE_SLUG
+    (finding_dir / "index.html").write_text(
+        _finding_page(public_url), encoding="utf-8")
     index = archive.write_archive(tmp, days, generated_at=generated_at,
                                   source_endpoint=latest.endpoint)
     archive.write_index(tmp, index)
@@ -1641,4 +2029,6 @@ def generate_report(
         "archived_windows": index["window_count"],
         "archive_days": index["day_count"],
         "archive_problems": len(index["problems"]),
+        "findings": finding_stats["count"],
+        "latest_finding_id": finding_stats["latest_finding_id"],
     }

@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "weatherwatch.plc.reduction-refusal/v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema", "disposition", "code", "path", "reason",
+    "rejected_value_echoed", "raw_operation_retained"
+  ],
+  "properties": {
+    "schema": {"const": "weatherwatch.plc.reduction-refusal/v1"},
+    "disposition": {"const": "REFUSED"},
+    "code": {"type": "string"},
+    "path": {"type": "string"},
+    "reason": {"type": "string"},
+    "rejected_value_echoed": {"const": false},
+    "raw_operation_retained": {"const": false}
+  }
+}

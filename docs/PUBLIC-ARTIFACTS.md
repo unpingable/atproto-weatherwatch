@@ -3,7 +3,7 @@
 What `weatherwatch.neutral.zone` publishes, what a consumer may rely on, and
 which of those guarantees exist to protect the reader rather than the server.
 
-Status: current as of 2026-08-25. Inherits every boundary in
+Status: current as of 2026-08-26. Inherits every boundary in
 [`../src/weatherwatch/social/BOUNDARIES.md`](../src/weatherwatch/social/BOUNDARIES.md)
 and the field decisions in
 [`../src/weatherwatch/social/field/DECISIONS.md`](../src/weatherwatch/social/field/DECISIONS.md).
@@ -19,7 +19,16 @@ and the field decisions in
 | `history/index.json` | grows one row per observed day | `weatherwatch.history-index/v1` |
 | `history/YYYY-MM-DD.json` | one UTC day each | `weatherwatch.history-day/v1` |
 | `social.json` | yes — disclosure-gated episodes | `weatherwatch.social/v3` |
+| `findings/index.json` | yes — one row per published finding | `weatherwatch.findings.index/v1` |
+| `findings/<slug>/index.html` | yes — permanent finding page | — |
+| `findings/<slug>/finding.json` | yes — stable claim, design and limits | `weatherwatch.finding/v1` |
+| `findings/<slug>/receipts/*.json` | yes — aggregate receipts only | finding-specific, versioned |
 | `og-card.png` | static | — |
+
+Finding records are historical publications, not current observations. Report
+generation does not rewrite their publication date or silently refresh their
+qualification. The current observation remains in `summary.json`; a consumer
+must not substitute a published finding for current acquisition state.
 
 ## 2. The bounded-summary policy
 

@@ -25,8 +25,9 @@ from .conftest import ENDPOINT, write_hourly_run
 
 FIELD_PKG = pathlib.Path(q_mod.__file__).resolve().parent
 
-#: The same expression `deploy/publish.sh` greps a build directory with,
-#: plus salted actor tokens.
+#: Same identity-shape inventory as `weatherwatch.publication`; this string
+#: variant scans in-memory field documents while the publication gate scans
+#: rendered bytes.
 IDENTITY_RE = re.compile(
     r"did:(plc|web|key):|at://|bafy[a-z0-9]{10,}"
     r"|[a-z0-9-]+\.bsky\.(social|app)|\ba:[0-9a-f]{12}\b")

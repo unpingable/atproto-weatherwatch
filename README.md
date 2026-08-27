@@ -17,10 +17,17 @@ former `labelwatch.neutral.zone/weatherwatch` path and the `/beef` alias both
 
 **Status: M0–M7 implemented; collector supervised under systemd; static report
 published at <https://weatherwatch.neutral.zone/> (`/beef` 301s to
-it).** There is still no HTTP server, no API, and no read endpoint in this
-codebase — the collector writes a local SQLite file and the report is static
-HTML generated into a directory, which is then published. Run it from a
-terminal.
+it).** There is still no HTTP server or network API in this codebase — the
+collector writes a local SQLite file and the report is static HTML generated
+into a directory, which is then published. A versioned local status interface
+and repository concern declaration are documented in
+[`docs/VISIBILITY.md`](docs/VISIBILITY.md). Run it from a terminal.
+
+The bounded PLC source-format reducer is documented in
+[`docs/PLC-REDUCTION.md`](docs/PLC-REDUCTION.md). Its low-count suppression is
+per fact; it does not claim compositional non-disclosure across related facts
+or repeated releases. Its identity claim is structural and limited to the
+reducer/output boundary, not host-memory confidentiality.
 
 **What the published numbers are entitled to claim.** Rates are *as observed at
 one named Jetstream instance*, not network truth. M0 falsified relay
@@ -133,7 +140,12 @@ weatherwatch stats                         # metric totals and rates
 weatherwatch series post.create            # per-window, with conditioning
 weatherwatch ratios                        # reply/post, block/follow, ...
 weatherwatch correlate post.create.quote block.create
-weatherwatch report --output ./beef        # static dashboard
+weatherwatch report --output ./beef        # static observatory + findings
+weatherwatch status                         # concise current local diagnostics
+weatherwatch status --json                  # project.ops.status/v1
+weatherwatch compose --list-rules           # installed clock-only composition rules
+weatherwatch compose --input facts.json --rule RULE_ID
+weatherwatch plc-reduce --input plc.jsonl --acquired-at 2026-08-27T18:00:00Z
 ```
 
 Read commands default to the most recent *compatible* sequence of runs on one
@@ -157,8 +169,17 @@ src/weatherwatch/
   read.py         the "not summable" guard
   query.py        read side: series, run summaries, conditioning flags
   derive.py       read-time ratios, rolling baselines, z-scores, correlation
-  report.py       static dashboard generation (atomic directory swap)
+  report.py       static observatory generation (atomic directory swap)
+  findings.py     published finding registry + aggregate receipts
+  composition.py  clock-only reduced-fact composition + laundering refusals
+  plc_reducer.py  identity-rich PLC JSONL -> thresholded identity-free facts
+  visibility.py   repo-declared concern observation + human status
+  publication.py  candidate eligibility/privacy gate (not authority)
   cli.py
+.ops/
+  concerns.toml   neutral required concern inventory
+  observation.toml separate project-level acquisition binding
+  *.schema.json   declaration and shared status schemas
 spike/            M0 throwaway probes — do not build on these
 fixtures/         scrubbed structural fixtures + synthetic hostile cases
 measurements/     M0 aggregate measurements
@@ -206,7 +227,7 @@ stream, with an effect-size floor in front of them: a change smaller than
 because a near-flat baseline makes a 3% move enormously significant and a
 reader cannot un-see a red word. Both gates are uncalibrated and carry no
 statistical warrant; the z, baseline and percent change are all still printed
-unmodified beside the label. There is no Global Beef Index; the dashboard
+unmodified beside the label. There is no Global Beef Index; the observatory
 shows a placeholder marked *calibration not assumed*.
 
 ## Product doctrine
@@ -268,22 +289,40 @@ back out. Every disclaimer on the page was about *coverage* (which relay, how
 complete); none said what is not measured, so there was nothing to correct the
 misread with.
 
-Two fixes followed. The page now leads with the denial. And the canonical path
+Two fixes followed. The page first led with the denial, and the canonical path
 became `/weatherwatch`, because **a joke needs its disclaimer adjacent and a
 URL travels alone** — `/beef` still 301s so nothing breaks, but a redirect
-renders no text and so primes nothing.
+renders no text and so primes nothing. The later observatory layout lets a
+verified finding lead while keeping that denial on the landing page before the
+receipts.
 
 Note which phrase actually caused it. "Global Beef Index" is *obviously*
 unserious — that is the joke doing its job. "Cortisol accounting" was the
 dangerous one: solemn enough to parse as a real biomarker construct. The
-correction therefore leads the page, before either phrase, and `summary.json`
-carries `measures` / `does_not_measure` so a script never has to read prose.
+correction therefore remains explicit beside those phrases, and
+`summary.json` carries `measures` / `does_not_measure` so a script never has to
+read prose.
 
 **Narrative restraint.** The instrument reports observable aggregate behaviour
 and bounded derived conditions. "Post deletes elevated, blocks down" must not
 become "morning-after beef" or "users are deleting evidence". Those readings
 may be funny and even right, but the telemetry does not entail them. Humans
 may make the joke; the instrument must not certify it.
+
+## Temporal composition
+
+Composition V0 relates already-reduced source facts by bounded time windows,
+never by an actor or pseudonym. It propagates the weakest source coverage,
+admits only installed semantic rules, and attaches permitted and forbidden
+interpretations to every candidate claim. It does not ingest external sources,
+admit their evidence, or confer publication authority.
+
+The campaign contract and C0–C10 ledger are in
+[`docs/TEMPORAL-COMPOSITION.md`](docs/TEMPORAL-COMPOSITION.md). The boundary is
+shorter: **production observable, consumption unobservable**. Public writes do
+not measure reads, impressions, audience, attention, or engagement.
+Native metric candidates and the privacy tier each would require are tracked in
+[`docs/OBSERVATORY-ROADMAP.md`](docs/OBSERVATORY-ROADMAP.md).
 
 ## Deployment
 

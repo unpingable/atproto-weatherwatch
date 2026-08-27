@@ -1,0 +1,28 @@
+{
+  "schema": "weatherwatch.plc.source-contract/v1",
+  "upstream_repository": "https://github.com/did-method-plc/did-method-plc",
+  "revision": "45a14801609e182afcd6907f95013cfb10381f73",
+  "specification": {
+    "path": "website/spec/v0.1/did-plc.md",
+    "section": "Bulk Export",
+    "version": "v0.3.0",
+    "sha256": "7346e2ba9d186fa13d65466942f29136f2d3e2281a8a6dd08d689eda2c99af79"
+  },
+  "accepted_transport_shape": "sequenced_op",
+  "pagination_precondition": "integer after cursor; first request after=0",
+  "top_level_fields": [
+    "type", "operation", "did", "cid", "createdAt", "seq"
+  ],
+  "ordering": "strictly_monotonic_seq",
+  "accepted_operation_types": [
+    "plc_operation", "plc_tombstone", "create"
+  ],
+  "consumed_operation_fields": [
+    "type", "prev", "services.atproto_pds.type",
+    "services.atproto_pds.endpoint", "service"
+  ],
+  "legacy_timestamp_export_accepted": false,
+  "source_authenticity_verified": false,
+  "operation_signatures_verified": false,
+  "future_revision_equivalence_automatic": false
+}

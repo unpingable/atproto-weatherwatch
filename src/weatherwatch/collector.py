@@ -114,6 +114,8 @@ class Collector:
         self._resume_from_us: int | None = None
         self._awaiting_first_event_after_resume = False
         self._started_mono = 0.0
+        self._runtime_last_write_mono = 0.0
+        self._last_frame_at: str | None = None
 
     # -- lifecycle ---------------------------------------------------------
 
@@ -134,6 +136,7 @@ class Collector:
             planned_end=planned_end,
             resume_cursor=resume_cursor,
         )
+        self._record_runtime("starting")
         LOG.info(
             "run %s started endpoint=%s resume_cursor=%s width=%ds",
             self.run_id, self.endpoint,
@@ -156,6 +159,42 @@ class Collector:
     def stop(self, reason: str = "signal") -> None:
         self._stop = True
         self._stop_reason = reason
+
+    def _record_runtime(
+        self,
+        state: str,
+        *,
+        last_error_kind: str | None = None,
+        heartbeat: bool = False,
+    ) -> None:
+        """Persist identity-free collector liveness/connection testimony.
+
+        It is deliberately separate from the bucket/cursor transaction: this
+        row can describe the producer, but can never advance observation
+        continuity.  Failure to write diagnostics must not cost stream data;
+        an old row becomes STALE/UNKNOWN on the visibility read side.
+        """
+        now_mono = time.monotonic()
+        interval = max(5.0, min(15.0, self.bucket_width / 4))
+        if heartbeat and now_mono - self._runtime_last_write_mono < interval:
+            return
+        payload = {
+            "schema": "weatherwatch.collector_runtime.v1",
+            "state": state,
+            "updated_at": timeutil.now_iso(),
+            "run_id": self.run_id,
+            "endpoint": self.endpoint,
+            "last_frame_at": self._last_frame_at,
+            "last_error_kind": last_error_kind,
+        }
+        try:
+            db.set_meta(
+                self.conn, "collector_runtime:v1",
+                json.dumps(payload, sort_keys=True, separators=(",", ":")),
+            )
+            self._runtime_last_write_mono = now_mono
+        except sqlite3.Error as exc:
+            LOG.warning("collector runtime status write failed: %s", exc)
 
     # -- connection --------------------------------------------------------
 
@@ -233,6 +272,8 @@ class Collector:
 
     def _handle_raw(self, raw: str) -> None:
         self._messages += 1
+        self._last_frame_at = timeutil.now_iso()
+        self._record_runtime("connected", heartbeat=True)
         try:
             msg = json.loads(raw)
         except (json.JSONDecodeError, ValueError):
@@ -286,6 +327,7 @@ class Collector:
         try:
             while not self._stop and not self._duration_elapsed():
                 url = self._build_url()
+                self._record_runtime("connecting")
                 try:
                     async with websockets.connect(
                         url,
@@ -296,6 +338,7 @@ class Collector:
                     ) as ws:
                         LOG.info("connected %s%s", self.endpoint,
                                  "" if first_connection else " (reconnect)")
+                        self._record_runtime("connected")
                         if not first_connection:
                             self._reconnects += 1
                             self.health.record_reconnect()
@@ -314,6 +357,7 @@ class Collector:
                                 # a run is recorded, not merely absent.
                                 self.acc.tick()
                                 self._flush_pending()
+                                self._record_runtime("connected", heartbeat=True)
                                 continue
                             self._handle_raw(raw)
                             self.acc.tick()
@@ -335,6 +379,8 @@ class Collector:
                     raise
                 except Exception as e:
                     LOG.warning("connection error (%s: %s)", type(e).__name__, e)
+                    self._record_runtime(
+                        "disconnected", last_error_kind=type(e).__name__)
 
                 if self._stop or self._duration_elapsed():
                     break
@@ -347,6 +393,7 @@ class Collector:
                     1 + random.random() * 0.2
                 )
                 LOG.info("reconnecting in %.1fs", delay)
+                self._record_runtime("reconnecting")
                 await asyncio.sleep(delay)
                 backoff = min(backoff * 2, RECONNECT_BACKOFF_CAP_S)
 
@@ -362,6 +409,7 @@ class Collector:
             except Exception:
                 LOG.exception("final flush failed; cursor not advanced")
             self._end_run()
+            self._record_runtime("stopped")
             if self.checkpoint_path:
                 self.health.write_checkpoint(self.checkpoint_path)
             if self.social_sink is not None:

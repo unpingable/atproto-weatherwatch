@@ -90,22 +90,11 @@ fi
 
 [ -f "$BUILD/index.html" ] || { echo "!! no $BUILD/index.html" >&2; exit 1; }
 
-# Refuse to publish anything carrying user identity. The generator cannot
-# produce it, but this is the last gate before bytes leave the machine and it
-# costs nothing to keep.
-# The `a:[0-9a-f]{12}` arm covers salted actor tokens, which the social lane
-# puts on edge-tier findings. Those findings are excluded from the published
-# projection by detector allowlist, so this arm should never fire — which is
-# exactly why it is here: a gate that only checks what you expect to go wrong
-# is not a gate.
-IDENT_RE="did:(plc|web|key):|at://|bafy[a-z0-9]{10,}|[a-z0-9-]+\.bsky\.(social|app)|\ba:[0-9a-f]{12}\b"
 echo "==> Privacy gate"
-if grep -rEq "$IDENT_RE" "$BUILD"; then
-  echo "!! identity-shaped value found in $BUILD — refusing to publish" >&2
-  grep -rEno "$IDENT_RE" "$BUILD" >&2 | head
-  exit 1
-fi
-echo "    clean"
+# The supported CLI owns the same deterministic gate used by `status`.  It
+# reports only the shape and file on refusal, never repeats identity bytes.
+# PASS means local candidate eligibility, not publication authority.
+"${RENDER[@]}" publication-gate --report-dir "$BUILD"
 
 if [ "$MODE" = "local" ]; then
   STAGE="${TARGET}.incoming"

@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "weatherwatch.composition.refusal/v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema", "disposition", "code", "path", "reason",
+    "rejected_value_echoed"
+  ],
+  "properties": {
+    "schema": {"const": "weatherwatch.composition.refusal/v1"},
+    "disposition": {"const": "REFUSED"},
+    "code": {"type": "string", "minLength": 1},
+    "path": {"type": "string", "minLength": 1},
+    "reason": {"type": "string", "minLength": 1},
+    "rejected_value_echoed": {"const": false}
+  }
+}

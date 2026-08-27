@@ -1,0 +1,168 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "weatherwatch.plc.reduction/v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema", "disposition", "reduction_authority", "publication_authority",
+    "source_contract_id", "source_contract", "input_format", "acquired_at",
+    "window_policy", "resource_policy", "disclosure_claim", "source_envelope",
+    "custody", "semantic_limits", "bundle"
+  ],
+  "properties": {
+    "schema": {"const": "weatherwatch.plc.reduction/v1"},
+    "disposition": {"const": "REDUCED"},
+    "reduction_authority": {"const": false},
+    "publication_authority": {"const": false},
+    "source_contract_id": {"const": "plc.directory.operations.v1"},
+    "source_contract": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "upstream_repository", "revision", "spec_path", "spec_section",
+        "spec_version", "spec_sha256"
+      ],
+      "properties": {
+        "upstream_repository": {
+          "const": "https://github.com/did-method-plc/did-method-plc"
+        },
+        "revision": {
+          "const": "45a14801609e182afcd6907f95013cfb10381f73"
+        },
+        "spec_path": {"const": "website/spec/v0.1/did-plc.md"},
+        "spec_section": {"const": "Bulk Export"},
+        "spec_version": {"const": "v0.3.0"},
+        "spec_sha256": {
+          "const": "7346e2ba9d186fa13d65466942f29136f2d3e2281a8a6dd08d689eda2c99af79"
+        }
+      }
+    },
+    "input_format": {"const": "plc.directory.sequenced-op-jsonl/v1"},
+    "acquired_at": {"type": "string", "format": "date-time"},
+    "window_policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "window_seconds", "alignment", "disclosure_count",
+        "zero_through_threshold_minus_one_indistinguishable",
+        "maximum_emitted_windows"
+      ],
+      "properties": {
+        "window_seconds": {"type": "integer", "minimum": 604800},
+        "alignment": {"const": "non_overlapping_utc_weeks"},
+        "disclosure_count": {"type": "integer", "minimum": 10},
+        "zero_through_threshold_minus_one_indistinguishable": {"const": true},
+        "maximum_emitted_windows": {"type": "integer", "maximum": 104}
+      }
+    },
+    "resource_policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "maximum_input_line_bytes", "maximum_endpoint_bytes", "maximum_json_nesting",
+        "maximum_operations", "maximum_distinct_identity_histories",
+        "maximum_tracked_event_windows", "spill_identity_state_to_disk"
+      ],
+      "properties": {
+        "maximum_input_line_bytes": {"const": 32768},
+        "maximum_endpoint_bytes": {"const": 2048},
+        "maximum_json_nesting": {"const": 64},
+        "maximum_operations": {"const": 1000000},
+        "maximum_distinct_identity_histories": {"const": 250000},
+        "maximum_tracked_event_windows": {"const": 4096},
+        "spill_identity_state_to_disk": {"const": false}
+      }
+    },
+    "disclosure_claim": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "low_count_suppression_scope", "compositional_non_disclosure_claimed",
+        "revision_differencing_protected", "derived_small_aggregate_counts_possible",
+        "persisted_identity_linkage_fields_present"
+      ],
+      "properties": {
+        "low_count_suppression_scope": {"const": "each_fact_independently"},
+        "compositional_non_disclosure_claimed": {"const": false},
+        "revision_differencing_protected": {"const": false},
+        "derived_small_aggregate_counts_possible": {"const": true},
+        "persisted_identity_linkage_fields_present": {"const": false}
+      }
+    },
+    "source_envelope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "entries_observed", "first_sequence", "last_sequence",
+        "event_time_min", "event_time_max", "complete_windows_observed",
+        "windows_emitted", "incomplete_current_windows_omitted",
+        "unresolved_update_predecessors", "directory_completeness_claimed",
+        "population_denominator_claimed", "nullification_status", "coverage_scope"
+      ],
+      "properties": {
+        "entries_observed": {"type": "integer", "minimum": 1},
+        "first_sequence": {"type": "integer", "minimum": 1},
+        "last_sequence": {"type": "integer", "minimum": 1},
+        "event_time_min": {"type": "string", "format": "date-time"},
+        "event_time_max": {"type": "string", "format": "date-time"},
+        "complete_windows_observed": {"type": "integer", "minimum": 0},
+        "windows_emitted": {"type": "integer", "minimum": 0, "maximum": 104},
+        "incomplete_current_windows_omitted": {"type": "integer", "minimum": 0},
+        "unresolved_update_predecessors": {"type": "integer", "minimum": 0},
+        "directory_completeness_claimed": {"const": false},
+        "population_denominator_claimed": {"const": false},
+        "nullification_status": {"const": "not_available_in_sequenced_export"},
+        "coverage_scope": {"type": "string"}
+      }
+    },
+    "custody": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "identity_bearing_input_ephemeral", "cross_row_identity_state",
+        "raw_operations_retained", "identity_or_endpoint_emitted",
+        "provider_dimensions_emitted", "stable_pseudonyms_emitted",
+        "application_refusals_echo_input", "core_dump_suppressed_during_reduction",
+        "secure_memory_erasure_claimed", "host_memory_confidentiality_claimed"
+      ],
+      "properties": {
+        "identity_bearing_input_ephemeral": {"const": true},
+        "cross_row_identity_state": {"const": "memory_only_and_cleared"},
+        "raw_operations_retained": {"const": false},
+        "identity_or_endpoint_emitted": {"const": false},
+        "provider_dimensions_emitted": {"const": false},
+        "stable_pseudonyms_emitted": {"const": false},
+        "application_refusals_echo_input": {"const": false},
+        "core_dump_suppressed_during_reduction": {"type": "boolean"},
+        "secure_memory_erasure_claimed": {"const": false},
+        "host_memory_confidentiality_claimed": {"const": false}
+      }
+    },
+    "semantic_limits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "endpoint_mutation_is_migration",
+        "migration_like_transition_is_successful_migration",
+        "migrant_follow_through_supported", "provider_flow_supported",
+        "network_population_supported"
+      ],
+      "properties": {
+        "endpoint_mutation_is_migration": {"const": false},
+        "migration_like_transition_is_successful_migration": {"const": false},
+        "migrant_follow_through_supported": {"const": false},
+        "provider_flow_supported": {"const": false},
+        "network_population_supported": {"const": false}
+      }
+    },
+    "bundle": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema", "facts"],
+      "properties": {
+        "schema": {"const": "weatherwatch.composition.bundle/v1"},
+        "facts": {"type": "array"}
+      }
+    }
+  }
+}

@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "weatherwatch.composition.output/v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema", "rule_id", "proposition", "composition_authority",
+    "source_admission_performed", "join_basis", "permitted_interpretations",
+    "forbidden_interpretations", "claims", "disposition", "state"
+  ],
+  "properties": {
+    "schema": {"const": "weatherwatch.composition.output/v1"},
+    "rule_id": {"type": "string"},
+    "proposition": {"type": "string"},
+    "composition_authority": {"const": false},
+    "source_admission_performed": {"const": false},
+    "join_basis": {"const": "bounded_temporal_overlap_only"},
+    "permitted_interpretations": {"type": "array", "items": {"type": "string"}},
+    "forbidden_interpretations": {"type": "array", "items": {"type": "string"}},
+    "claims": {"type": "array", "items": {"type": "object"}},
+    "disposition": {"enum": ["COMPOSED", "UNSATISFIED"]},
+    "state": {
+      "enum": ["PRESENT", "DEGRADED", "UNKNOWN", "STALE", "ABSENT", "REFUSED"]
+    },
+    "coverage_fraction": {"type": ["number", "null"]},
+    "reason": {"type": "string"},
+    "inputs": {"type": "array", "items": {"type": "object"}}
+  }
+}

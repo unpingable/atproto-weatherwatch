@@ -7,6 +7,11 @@
     weatherwatch ratios
     weatherwatch correlate post.create.quote block.create
     weatherwatch report --output DIR
+    weatherwatch status [--json] [--report-dir DIR]
+    weatherwatch publication-gate --report-dir DIR [--json]
+    weatherwatch compose --input reduced-facts.json --rule RULE_ID
+    weatherwatch compose --list-rules
+    weatherwatch plc-reduce --input sequenced-export.jsonl --acquired-at TIME
     weatherwatch social detect --last 24h
     weatherwatch social report --output DIR
 
@@ -22,6 +27,7 @@ import logging
 import os
 import signal
 import sys
+import datetime as dt
 from pathlib import Path
 
 from . import COLLECTOR_VERSION, db, derive, query, read, timeutil
@@ -293,6 +299,124 @@ def _cmd_report(args) -> int:
     return 0
 
 
+def _parse_status_now(value: str | None) -> dt.datetime | None:
+    if value is None:
+        return None
+    try:
+        parsed = dt.datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise SystemExit(f"invalid --now timestamp: {value}") from exc
+    if parsed.tzinfo is None:
+        raise SystemExit("--now must include a timezone")
+    return parsed
+
+
+def _cmd_status(args) -> int:
+    from . import visibility
+    document = visibility.build_status(
+        db_path=args.db, report_dir=args.report_dir,
+        now=_parse_status_now(args.now))
+    if args.json:
+        print(json.dumps(document, indent=2, sort_keys=True))
+    else:
+        print(visibility.render_human(document))
+    return 0
+
+
+def _cmd_publication_gate(args) -> int:
+    from .publication import evaluate_candidate
+    result = evaluate_candidate(args.report_dir)
+    if args.json:
+        print(json.dumps(result, indent=2, sort_keys=True))
+    else:
+        print(f"publication gate: {result['disposition']} — {result['reason']}")
+        for refusal in result["refusals"]:
+            suffix = f" ({refusal.get('file', '')})" if refusal.get("file") else ""
+            print(f"  {refusal['kind']}{suffix}")
+        print("candidate eligibility is not publication authority")
+    return 0 if result["disposition"] == "PASSED" else 2
+
+
+def _cmd_compose(args) -> int:
+    """Compose already-reduced facts; never ingest an external source here."""
+    from . import composition
+    if args.list_rules:
+        print(json.dumps(composition.rules_document(), indent=2, sort_keys=True))
+        return 0
+    if not args.input or not args.rule:
+        print("compose requires --input and --rule (or --list-rules)",
+              file=sys.stderr)
+        return 2
+    try:
+        document = json.loads(Path(args.input).read_text(encoding="utf-8"))
+        output = composition.compose(document, args.rule)
+    except (OSError, json.JSONDecodeError) as exc:
+        refusal = {
+            "schema": composition.SCHEMA_REFUSAL,
+            "disposition": composition.REFUSED,
+            "code": "INPUT_UNREADABLE",
+            "path": "input",
+            "reason": f"composition input could not be read ({type(exc).__name__})",
+            "rejected_value_echoed": False,
+        }
+        print(json.dumps(refusal, indent=2, sort_keys=True))
+        return 2
+    except composition.CompositionRefused as exc:
+        print(json.dumps(exc.as_dict(), indent=2, sort_keys=True))
+        return 2
+    print(json.dumps(output, indent=2, sort_keys=True))
+    return 0 if output["disposition"] == "COMPOSED" else 2
+
+
+def _cmd_plc_reduce(args) -> int:
+    """Run the one identity-aware reducer behind a non-echoing CLI boundary."""
+    from . import plc_reducer
+    with plc_reducer.suppress_core_dumps() as core_suppressed:
+        if not core_suppressed:
+            refusal = plc_reducer.PLCReductionRefused(
+                "CORE_DUMP_SUPPRESSION_UNAVAILABLE", "process",
+                "raw PLC input is refused unless process core dumps are disabled")
+            print(json.dumps(refusal.as_dict(), indent=2, sort_keys=True))
+            return 2
+        with plc_reducer.controlled_termination_signals() as signals_controlled:
+            if not signals_controlled:
+                refusal = plc_reducer.PLCReductionRefused(
+                    "SIGNAL_CUSTODY_UNAVAILABLE", "process",
+                    "raw PLC input is refused unless termination signals can be controlled")
+                print(json.dumps(refusal.as_dict(), indent=2, sort_keys=True))
+                return 2
+            try:
+                acquired_at = plc_reducer.parse_timestamp(
+                    args.acquired_at, "acquired_at")
+                seconds = timeutil.parse_duration(args.window)
+                if not float(seconds).is_integer():
+                    raise plc_reducer.PLCReductionRefused(
+                        "UNSAFE_WINDOW_POLICY", "policy.window_seconds",
+                        "PLC publication windows must be whole non-overlapping UTC weeks")
+                output = plc_reducer.reduce_path(
+                    args.input, acquired_at=acquired_at,
+                    window_seconds=int(seconds),
+                    disclosure_count=args.min_disclosure_count,
+                    core_dump_suppressed=True)
+            except plc_reducer.PLCReductionRefused as exc:
+                exit_code = getattr(exc, "exit_code", 2)
+                payload = exc.as_dict()
+                del exc  # discard chained parser frames before restoring custody
+                print(json.dumps(payload, indent=2, sort_keys=True))
+                return exit_code
+            except Exception as exc:  # raw input must not escape through a traceback
+                exception_class = type(exc).__name__
+                del exc  # discard traceback and raw reducer locals under custody
+                refusal = plc_reducer.PLCReductionRefused(
+                    "REDUCER_FAILED", "reducer",
+                    f"PLC reducer failed without exposing input ({exception_class})")
+                print(json.dumps(refusal.as_dict(), indent=2, sort_keys=True))
+                return 2
+            document = output["bundle"] if args.bundle_only else output
+            print(json.dumps(document, indent=2, sort_keys=True))
+            return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="weatherwatch")
     ap.add_argument("--db", default=str(db.DEFAULT_DB_PATH),
@@ -364,6 +488,45 @@ def main(argv: list[str] | None = None) -> int:
                         "are share-card meta tags emitted; without it the page "
                         "is entirely self-contained.")
     p.set_defaults(fn=_cmd_report)
+
+    p = sub.add_parser(
+        "status", help="current local visibility (human or versioned JSON)")
+    p.add_argument("--report-dir", default="build/report",
+                   help="rendered candidate directory (default build/report)")
+    p.add_argument("--json", action="store_true",
+                   help="emit project.ops.status/v1 JSON")
+    p.add_argument("--now", default=None, help=argparse.SUPPRESS)
+    p.set_defaults(fn=_cmd_status)
+
+    p = sub.add_parser(
+        "publication-gate", help="evaluate local candidate publication eligibility")
+    p.add_argument("--report-dir", required=True)
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(fn=_cmd_publication_gate)
+
+    p = sub.add_parser(
+        "compose", help="clock-only composition of already-reduced facts")
+    p.add_argument("--input", default=None,
+                   help="weatherwatch.composition.bundle/v1 JSON")
+    p.add_argument("--rule", default=None,
+                   help="installed explicit semantic composition rule")
+    p.add_argument("--list-rules", action="store_true",
+                   help="emit installed rules and their interpretation bounds")
+    p.set_defaults(fn=_cmd_compose)
+
+    p = sub.add_parser(
+        "plc-reduce", help="reduce sequenced PLC export into identity-free facts")
+    p.add_argument("--input", required=True,
+                   help="local sequenced PLC /export JSONL acquisition")
+    p.add_argument("--acquired-at", required=True,
+                   help="when this exact source artifact was acquired (ISO-8601)")
+    p.add_argument("--window", default="7d",
+                   help="non-overlapping UTC window; minimum/multiple 7d")
+    p.add_argument("--min-disclosure-count", type=int, default=10,
+                   help="per fact, zero through N-1 are suppressed; minimum 10")
+    p.add_argument("--bundle-only", action="store_true",
+                   help="emit only the composition bundle, without reducer receipt")
+    p.set_defaults(fn=_cmd_plc_reduce)
 
     from .social.cli import register as _register_social
     from .social.store import DEFAULT_EDGE_DB_PATH

@@ -1,0 +1,75 @@
+schema = "project.concerns/v1"
+project = "weatherwatch"
+
+# Semantic inventory only: not evidence, acquisition policy, qualification,
+# recurrence, severity, remediation, or authority.
+
+[[concerns]]
+id = "weatherwatch.observation.coverage"
+question = "weatherwatch.question.observation-coverage-known"
+profile = "weatherwatch.profile.observation-coverage.v1"
+required = true
+description = "Is present aggregate observation coverage known from a current instrumented window?"
+
+[[concerns]]
+id = "weatherwatch.acquisition.connection"
+question = "weatherwatch.question.acquisition-connected"
+profile = "weatherwatch.profile.acquisition-connection.v1"
+required = true
+description = "Does the collector currently report a fresh WSS connection state?"
+
+[[concerns]]
+id = "weatherwatch.acquisition.cursor"
+question = "weatherwatch.question.ingest-cursor-current"
+profile = "weatherwatch.profile.ingest-cursor-current.v1"
+required = true
+description = "Is the endpoint-scoped ingest cursor current and coherent with durable aggregate state?"
+
+[[concerns]]
+id = "weatherwatch.acquisition.delay"
+question = "weatherwatch.question.observation-delay-bounded"
+profile = "weatherwatch.profile.observation-delay.v1"
+required = true
+description = "Does a current event-lag measurement remain within Weatherwatch's existing observation-health profile?"
+
+[[concerns]]
+id = "weatherwatch.observation.loss"
+question = "weatherwatch.question.known-loss-absent"
+profile = "weatherwatch.profile.known-loss.v1"
+required = true
+description = "Are all instrumented known-loss, gap, parse, late-event, and ambiguity counters zero in the current window?"
+
+[[concerns]]
+id = "weatherwatch.persistence.access"
+question = "weatherwatch.question.durable-state-accessible"
+profile = "weatherwatch.profile.durable-state-access.v1"
+required = true
+description = "Can Weatherwatch read its local durable state and acquire a rolled-back write transaction?"
+
+[[concerns]]
+id = "weatherwatch.persistence.continuity"
+question = "weatherwatch.question.cursor-meta-coherent"
+profile = "weatherwatch.profile.cursor-meta-coherence.v1"
+required = true
+description = "Are schema, endpoint-scoped cursor metadata, identity-free tables, and continuity invariants structurally coherent?"
+
+[[concerns]]
+id = "weatherwatch.aggregate.production"
+question = "weatherwatch.question.aggregate-window-current"
+profile = "weatherwatch.profile.aggregate-production.v1"
+required = true
+description = "Has the latest run produced a current aggregate window, including an explicit observed-empty product?"
+
+[[concerns]]
+id = "weatherwatch.report.candidate"
+question = "weatherwatch.question.candidate-report-current"
+profile = "weatherwatch.profile.candidate-report.v1"
+required = true
+description = "Does a structurally readable candidate report exist and remain current when evaluated now?"
+
+[[concerns]]
+id = "weatherwatch.publication.gate"
+question = "weatherwatch.question.publish-gate-passes"
+profile = "weatherwatch.profile.publish-gate.v1"
+required = true
+description = "What is the current local publication-gate disposition for the candidate, without implying publication authority or success?"

@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:weatherwatch:schema:composition-bundle:v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "facts"],
+  "properties": {
+    "schema": {"const": "weatherwatch.composition.bundle/v1"},
+    "facts": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/fact"}
+    }
+  },
+  "$defs": {
+    "semantic_id": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_.-]{1,95}$"
+    },
+    "dimension_token": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_-]{0,31}$"
+    },
+    "window": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["start", "end"],
+      "properties": {
+        "start": {"type": "string", "format": "date-time"},
+        "end": {"type": "string", "format": "date-time"}
+      }
+    },
+    "fact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "contract_id", "measurement", "window", "state",
+        "acquired_at", "coverage_fraction", "value", "unit", "dimensions"
+      ],
+      "properties": {
+        "contract_id": {"$ref": "#/$defs/semantic_id"},
+        "measurement": {"$ref": "#/$defs/semantic_id"},
+        "window": {"$ref": "#/$defs/window"},
+        "acquired_at": {"type": "string", "format": "date-time"},
+        "state": {
+          "enum": ["PRESENT", "DEGRADED", "UNKNOWN", "STALE", "ABSENT", "REFUSED"]
+        },
+        "coverage_fraction": {
+          "type": ["number", "null"], "minimum": 0, "maximum": 1
+        },
+        "value": {"type": ["number", "null"]},
+        "unit": {"$ref": "#/$defs/dimension_token"},
+        "dimensions": {
+          "type": "object",
+          "additionalProperties": {"$ref": "#/$defs/dimension_token"}
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:weatherwatch:schema:composition-contracts:v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "contracts"],
+  "properties": {
+    "schema": {"const": "weatherwatch.composition.contracts/v1"},
+    "contracts": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/contract"}
+    }
+  },
+  "$defs": {
+    "semantic_id": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_.-]{1,95}$"
+    },
+    "dimension_token": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_-]{0,31}$"
+    },
+    "measurement": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["semantic_profile", "unit"],
+      "properties": {
+        "semantic_profile": {"$ref": "#/$defs/semantic_id"},
+        "unit": {"$ref": "#/$defs/dimension_token"}
+      }
+    },
+    "contract": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "contract_id", "producer_id", "vantage_profile", "coverage_profile",
+        "measurements", "allowed_dimensions"
+      ],
+      "properties": {
+        "contract_id": {"$ref": "#/$defs/semantic_id"},
+        "producer_id": {"$ref": "#/$defs/semantic_id"},
+        "vantage_profile": {"$ref": "#/$defs/semantic_id"},
+        "coverage_profile": {"$ref": "#/$defs/semantic_id"},
+        "measurements": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": {"$ref": "#/$defs/measurement"}
+        },
+        "allowed_dimensions": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 32,
+            "uniqueItems": true,
+            "items": {"$ref": "#/$defs/dimension_token"}
+          }
+        }
+      }
+    }
+  }
+}

@@ -100,16 +100,33 @@ def test_the_state_precedes_the_receipts(plain_db, tmp_path):
         "A &middot;" in report_html else state < body.index("A · Observation status")
 
 
-def test_the_scope_denial_still_comes_first(plain_db, tmp_path):
-    """The reading may lead, but not past the correction.
-
-    The name misleads, which is the whole reason the denial exists; a visitor
-    who reads four words and leaves must still have met it.
-    """
+def test_the_finding_leads_and_the_scope_denial_precedes_receipts(
+        plain_db, tmp_path):
+    """Publish the result first without burying the correction in receipts."""
     out = tmp_path / "site"
     report.generate_report(plain_db, out)
     html = (out / "index.html").read_text()
-    assert html.index("does not measure") < html.index("Station offline")
+    body = html[html.index("<body"):]
+    boundary = body.index("Counts the weather, <strong>keeps no people.</strong>")
+    finding = body.index("Jetstream observers disagree")
+    current = body.index("Network weather — now")
+    denial = body.index("does not measure")
+    receipts = body.index('class="deck"')
+    assert boundary < finding < current < denial < receipts
+
+
+def test_expression_is_not_presented_as_attention(plain_db, tmp_path):
+    out = tmp_path / "site"
+    report.generate_report(plain_db, out)
+    html = (out / "index.html").read_text()
+    body = html[html.index("<body"):]
+    boundary = "Production observable. Consumption unobservable."
+    assert _text(body).count(boundary) >= 2  # masthead and explanatory substrate
+    assert "Activity is not engagement" in body
+    summary = json.loads((out / "summary.json").read_text())
+    refusals = " ".join(summary["does_not_measure"]).lower()
+    for concept in ("reads", "impressions", "attention", "engagement"):
+        assert concept in refusals
 
 
 # --- 2. the refusal travels with the reading -------------------------------

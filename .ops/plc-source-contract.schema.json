@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "weatherwatch.plc.source-contract/v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema", "upstream_repository", "revision", "specification",
+    "accepted_transport_shape", "pagination_precondition", "top_level_fields",
+    "ordering", "accepted_operation_types", "consumed_operation_fields",
+    "legacy_timestamp_export_accepted", "source_authenticity_verified",
+    "operation_signatures_verified", "future_revision_equivalence_automatic"
+  ],
+  "properties": {
+    "schema": {"const": "weatherwatch.plc.source-contract/v1"},
+    "upstream_repository": {
+      "const": "https://github.com/did-method-plc/did-method-plc"
+    },
+    "revision": {
+      "const": "45a14801609e182afcd6907f95013cfb10381f73"
+    },
+    "specification": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "section", "version", "sha256"],
+      "properties": {
+        "path": {"const": "website/spec/v0.1/did-plc.md"},
+        "section": {"const": "Bulk Export"},
+        "version": {"const": "v0.3.0"},
+        "sha256": {
+          "const": "7346e2ba9d186fa13d65466942f29136f2d3e2281a8a6dd08d689eda2c99af79"
+        }
+      }
+    },
+    "accepted_transport_shape": {"const": "sequenced_op"},
+    "pagination_precondition": {
+      "const": "integer after cursor; first request after=0"
+    },
+    "top_level_fields": {
+      "const": ["type", "operation", "did", "cid", "createdAt", "seq"]
+    },
+    "ordering": {"const": "strictly_monotonic_seq"},
+    "accepted_operation_types": {
+      "const": ["plc_operation", "plc_tombstone", "create"]
+    },
+    "consumed_operation_fields": {
+      "const": [
+        "type", "prev", "services.atproto_pds.type",
+        "services.atproto_pds.endpoint", "service"
+      ]
+    },
+    "legacy_timestamp_export_accepted": {"const": false},
+    "source_authenticity_verified": {"const": false},
+    "operation_signatures_verified": {"const": false},
+    "future_revision_equivalence_automatic": {"const": false}
+  }
+}
