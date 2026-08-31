@@ -683,6 +683,8 @@ three-instrument surface at this time on custody grounds; prerequisites named
 per instrument.
 **Public surface created:** none.
 **Code changed:** none.
+**Closeout:** §13 (2026-08-31) — classification confirmed
+`B / IMPLEMENTATION-NOT-ATTEMPTED / NO-MUREX-DEPLOYMENT-EXISTS`.
 
 ---
 
@@ -746,3 +748,216 @@ Breakwater implemented no query API, filtering DSL, GraphQL, SQL-over-HTTP,
 firehose, webhook, streaming endpoint, SDK, auth tier, user dashboard,
 write/remediation plane, new daemon, or shared semantic runtime. A real
 consumer still gates implementation, and none has been identified.
+
+---
+
+## 13. Campaign closeout (2026-08-31)
+
+This section closes Murex. Architecture, implementation, qualification and
+deployment are kept separate on purpose, because two deployment findings arose
+after the decision and neither one bears on the decision.
+
+### 13.1 Final classification
+
+**Architectural decision:** B — SHARED-SURFACE-DESIGN-ONLY
+**Implementation status:** IMPLEMENTATION-NOT-ATTEMPTED
+**Production status:** NO-MUREX-DEPLOYMENT-EXISTS
+
+The three-line form `SHARED-SURFACE-IMPLEMENTABLE / IMPLEMENTATION-QUALIFIED /
+PRODUCTION-DEPLOYMENT-BLOCKED` was considered and **rejected**: it requires an
+implementation to qualify, and there is none. Claiming it would convert a
+deliberate decision not to build into a build that deployment happened to stop.
+
+Verified mechanically at closeout: no `/api/v1/` route, no fact-bundle HTTP
+endpoint, and no Murex-named module or test exists in any of the three
+repositories. `src/weatherwatch/composition.py` is **not** a Murex artifact —
+it predates the campaign (`30d9bb9`, 2026-08-27) and implements the existing
+`weatherwatch.composition.bundle/v1` file interchange, which is precisely why
+§3 proposed reusing it rather than inventing a second contract.
+
+### 13.2 What Murex actually produced
+
+| repository | Murex artifact | code changed |
+|---|---|---|
+| atproto-weatherwatch | `docs/MUREX-PUBLIC-FACT-SURFACE.md` (this document), commit `7be9cc7` | none |
+| atproto-labelwatch | `docs/MUREX-PREREQUISITES.md` | none |
+| atproto-driftwatch | `docs/MUREX-PREREQUISITES.md` | none |
+
+**Murex contributed zero lines of executable code.** The two prerequisite
+documents were physically committed inside Breakwater's repair commits
+(`114aa41`, `90057f9`) because they were updated in the same working tree;
+the code in those commits is Breakwater's observation-adequacy and
+identity-route work, not Murex's. Attribution matters here: a later reader
+counting insertions on a Murex-mentioning commit would otherwise credit Murex
+with an API it never built.
+
+### 13.3 Boundary reconfirmation
+
+The thesis is reconfirmed trivially and completely: a surface that does not
+exist exposes nothing. Each prohibited disclosure was checked against the
+repositories as they now stand, and Murex introduced none of them:
+
+| prohibited | introduced by Murex |
+|---|---|
+| raw ATProto operations | no |
+| arbitrary database queries | no |
+| DIDs/handles outside an approved public contract | no |
+| stable identity hashes or reconstructable cohorts | no |
+| raw collector payloads | no |
+| internal debugging or storage state | no |
+| write or control operations | no |
+| speculative filtering/query DSL | no |
+
+Consumers cannot obtain a stronger epistemic claim than the instrument can
+make, because there is no consumer route at all. The epistemic rules in §4 and
+the privacy analysis in §6 therefore stand as **design constraints on any
+future implementation**, not as properties of a shipped surface. Anyone
+implementing this later inherits them as preconditions.
+
+One clarification, because it is the likeliest future misreading: the
+Driftwatch identity-route exposure closed on 2026-08-31 was **not** a Murex
+surface and not caused by Murex. It was the pre-existing `dcd8293` scaffold
+proxied publicly. Murex §6.2 identified that boundary as unenforced; the
+identification was correct and the exposure was worse than §6.2 assumed.
+
+### 13.4 The contract, as finally recorded
+
+§3 records the actual contract and is unchanged by closeout. In summary:
+
+- **Common envelope:** the existing `weatherwatch.composition.bundle/v1`
+  shape — per-fact `contract_id`, `measurement`, `window{start,end}`,
+  `acquired_at`, `state`, `coverage_fraction`, `value`, `unit`, `dimensions`.
+- **Coverage/degradation:** per-fact, never one envelope-wide scalar. §5
+  records why the brief's illustrative envelope-level `coverage` and `window`
+  were wrong: heterogeneous per-fact coverage cannot be collapsed into a
+  single number without manufacturing a claim no instrument can support.
+- **Window semantics:** per-fact `window`, preserved from the reducer that
+  produced the fact; never re-windowed at serialization.
+- **State vocabulary:** the byte-identical `project.ops.status/v1` six-state
+  vocabulary already shared by all three repositories —
+  `PRESENT / DEGRADED / UNKNOWN / STALE / ABSENT / REFUSED`.
+- **Provenance/methodology:** `.ops/composition-contracts.json`
+  (`weatherwatch.composition.contracts/v1`) declaring `vantage_profile`,
+  `coverage_profile`, `semantic_profile`, `allowed_dimensions`.
+- **Freshness:** `acquired_at` per fact, distinct from window end.
+- **Routes:** **none.** No public route was created in any repository.
+- **Instrument differences:** real and documented in §3.3 rather than
+  flattened — Weatherwatch and Labelwatch sustain the shared envelope;
+  Driftwatch does not join it at this time, on custody grounds (§6.2).
+
+### 13.5 Deployment status by repository
+
+Murex has no deployment of its own. Recorded from direct production evidence
+gathered read-only at closeout, because two of the deployment findings that
+framed this campaign have since been superseded and a stale record would
+mislead.
+
+**Weatherwatch — no production change, none required.**
+`weatherwatch-collector.service` active since 2026-08-22. `/opt/weatherwatch`
+is not a git checkout and carries no `GIT_SHA` marker, so deployed provenance
+is unmarked; by content its `src/` is nearest the 2026-08-25 lineage
+(`e634fac`/`bc16bd1`, 4 files differing) and is behind branch HEAD. This is
+immaterial to Murex, which changed no Weatherwatch code. The provenance gap is
+noted as an observation, not adopted as Murex work.
+
+**Labelwatch — the b81b97b premise was a stale marker, and is superseded.**
+The blast-radius manifest is preserved because the reasoning was sound, but the
+number was wrong and must not be carried forward as fact:
+
+- `/opt/labelwatch/GIT_SHA` read `b81b97b`, from which a 15-commit /
+  ~7,610-insertion delta to `114aa41` was correctly computed.
+- That marker was stale. Production `src/` was **byte-identical to `04e5068`**,
+  the commit immediately preceding `114aa41`. Two further disagreeing markers
+  existed (`.git_sha` = `25a6e23`, an abandoned `/opt/labelwatch/.git` at
+  `f9c579b`). None described the running code; it was established by content.
+- The true delta was therefore **one commit** — the Breakwater
+  observation-adequacy repair alone.
+- Production now runs `114aa41`, deployed 2026-08-31T17:07:27Z under explicit
+  operator authorisation, both `labelwatch.service` and
+  `labelwatch-api.service` restarted. Receipt: `2809df5`.
+
+The dependency Murex actually had on Breakwater is precise and unchanged:
+prerequisites §8.2.1 and §8.2.2 (observation adequacy, and human/machine
+epistemic parity) were **correctness defects in Labelwatch's own published
+claims**, not Murex features. §8.2.3–8.2.6 remain open and are not required for
+this closeout.
+
+**Driftwatch — the STOP was correct, was honoured, and has since been
+discharged.** Preserved in full at
+`driftwatch/docs/findings/2026-08-31-identity-route-exposure.md`:
+
+- At the time of the Breakwater deployment attempt, `ADMIN_API_TOKEN` was
+  unset in production, confirmed three independent ways. `admin_auth` returned
+  `True` when unset, so the routes `90057f9` decorates would have been inert.
+  Deploying it would have produced a route table, a README and a passing test
+  suite all asserting a boundary that did not exist at runtime. The campaign
+  STOP condition applied and deployment was correctly halted.
+- Production inspection additionally established that
+  `driftwatch.sp00ky.net` proxied the entire application with no path matcher,
+  making seven routes externally reachable — including three per-DID identity
+  routes that ran unbounded SQL rather than refusing.
+- The condition has since been remediated under a separate incident, closed
+  2026-08-31: token set durably, `admin_auth` inverted to fail closed (503 when
+  unconfigured, constant-time comparison, CRITICAL at startup), identity routes
+  decorated, and the public vhost restricted to `/health`. Production runs
+  `7a68b02` on the durable release line `deploy/2026-08-28-combined`.
+
+Neither finding invalidates the Murex contract. Both are deployment-state and
+access-control facts. The Driftwatch finding does, however, **strengthen** the
+§6.2 custody conclusion that kept Driftwatch out of the shared surface: an
+instrument whose documented publication boundary was unenforced in code, and
+publicly reachable in production, was correctly excluded.
+
+### 13.6 Verification status
+
+Stated exactly, including what was not rerun.
+
+**Rerun at closeout:**
+
+| check | result |
+|---|---|
+| `git diff --check`, all three repositories | clean for all committed work; one warning in `driftwatch/tests/test_retention.py`, which is **operator dirty work**, not campaign work |
+| Murex implementation-absence scan (`/api/v1/`, fact-bundle endpoints, Murex-named modules/tests) | no matches — confirms design-only |
+| Prohibited-disclosure scan (§13.3 table) | none introduced by Murex |
+| Weatherwatch full suite | **701 passed, 0 failed** (5m15s) |
+
+The Weatherwatch suite had been uncollectable in the ambient environment —
+six modules, including `tests/test_composition.py`, failed to import for want
+of `websockets`. Rather than record that as a gap, the suite was run in an
+isolated virtualenv so the module covering the very interchange this design
+reuses (`weatherwatch.composition.bundle/v1`) was actually exercised. Nothing
+was installed into the operator's Python.
+
+**Cited from this campaign record, not rerun** (authoritative results already
+established, and rerunning changes nothing):
+
+| check | result | when |
+|---|---|---|
+| Labelwatch `test_observation_adequacy.py` | 15/15 pass (14/15 failed at clean HEAD before the repair) | Breakwater |
+| Labelwatch full suite | 6 pre-existing failures, identical at `b81b97b` baseline — none introduced | Breakwater |
+| Driftwatch `test_identity_route_boundary.py` + admin suites | 21/21 pass | incident closeout |
+| Driftwatch full suite | 509 passed, 8 skipped, 2 failed (`pytest-asyncio` absent — environment) | incident closeout, rerun on the release line |
+
+**Not run, and why:** deterministic-serialization, schema-conformance,
+degraded/unknown/stale coverage, unsupported-query-refusal,
+historical-boundary, and API/fact-agreement tests for the Murex surface do not
+exist, because the surface does not exist. They are named in §9 as the
+qualification set any future implementation must satisfy. No lint or type
+gate is configured in these repositories beyond the test suites.
+
+### 13.7 Explicit non-capabilities
+
+Murex built none of the following, and the decision explicitly forecloses them
+absent a named consumer: GraphQL, SQL-over-HTTP, a filtering or query DSL, a
+firehose, webhooks, streaming, an SDK, authentication tiers, a write or control
+API, a new daemon, a shared semantic runtime, a user-facing dashboard, and any
+per-DID, per-handle, or cohort-resolvable surface.
+
+### 13.8 Remaining prerequisites
+
+Unchanged from §8 and not discharged by this closeout: Weatherwatch §8.1;
+Labelwatch §8.2.3–§8.2.6; Driftwatch §8.3 (the publication boundary is now
+*enforced* for the identity routes, but Driftwatch joining the shared surface
+remains a separate custody decision, not a code task). The binding
+prerequisite remains the one named in §10: **a real consumer**. None has been
+identified, and implementation should not begin until one is.
