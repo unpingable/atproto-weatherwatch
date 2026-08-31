@@ -7,9 +7,13 @@ Canonical slug: **public-readonly-instrument-fact-api**
 Status: **reconnaissance complete; contract specified; implementation not
 performed.**
 
-Implementation decision: **B — SHARED-SURFACE-DESIGN-ONLY**
-Result classification: **shared envelope sustained for two instruments,
-disproved as a three-instrument surface at this time; prerequisites named.**
+Implementation decision: **A — SHARED-SURFACE-IMPLEMENTABLE**
+(Weatherwatch + Labelwatch; Driftwatch out-of-surface by architecture)
+*Amended from B at closeout, 2026-08-31 — see §13.1. Sections 7 and 12 record
+the original decision and are preserved as written.*
+Result classification: **shared envelope sustained for two instruments; not a
+three-instrument surface; implementation not started; prerequisites P1–P7 open
+(§13.8).**
 
 Campaign identity and result classification are separate. This document is the
 campaign record; it confers no publication authority and does not assert that
@@ -543,6 +547,17 @@ prerequisite deliverable, not a footnote.
 
 ## 7. Decision: B — SHARED-SURFACE-DESIGN-ONLY
 
+> **Superseded 2026-08-31 — see §13.1.** This section is preserved as the
+> decision as taken. Its "Why not A" rested on two repository defects, both of
+> which have since been discharged: Labelwatch's published JSON no longer omits
+> coverage (Breakwater added `observation` and `network_weather` to
+> `overview.json`, deployed as `114aa41`) and no longer manufactures `calm`
+> from a total outage; and Driftwatch's publication boundary is now enforced in
+> code rather than only documented. The residue of the Labelwatch defect is P1,
+> a duplicate implementation of one verdict — real, but not the "substantial
+> surgery" this section set as the bar. The reasoning below was correct when
+> written; the conditions it described no longer hold.
+
 **Why not A.** A requires that *the repositories* already have fact boundaries
 clean enough to implement without semantic distortion or substantial surgery.
 Weatherwatch does. Labelwatch does not — its published JSON omits the coverage
@@ -660,14 +675,16 @@ those tests would protect.
   (`posting.py`, `findings.py`, `publication.py`, `discovery_stream.py`).
   `publication.py` was read; it governs Bluesky posting readiness and is
   unrelated to the artifact publication boundary despite the shared filename.
-- **No consumer was interviewed.** The brief forbids speculative infrastructure
-  for hypothetical consumers; it follows that this contract is unvalidated
-  against a real one. The prerequisites should not be executed until at least
-  one intended consumer's needs are known.
-- **Weatherwatch's own composition rules were not re-verified**; C0–C2 are taken
-  as implemented per `docs/TEMPORAL-COMPOSITION.md` and the passing
-  `tests/test_composition.py` collection, which could not be run in this
-  environment owing to the `websockets` gap.
+- **No consumer was interviewed.** Recorded as a fact, no longer as a gate —
+  see §13.9. The intended surface is public, anonymous and read-only, so its
+  consumers are unknown *by design*; requiring a named one before building it
+  is a condition it can never satisfy. This contract is unvalidated against a
+  real consumer, which is a normal property of a public API at v1.
+- **Weatherwatch's own composition rules were not re-verified** at the time of
+  writing; C0–C2 were taken as implemented per `docs/TEMPORAL-COMPOSITION.md`.
+  *Closed at closeout*: the full Weatherwatch suite, including
+  `tests/test_composition.py`, was run in an isolated virtualenv —
+  701 passed, 0 failed (§13.6).
 
 ---
 
@@ -676,15 +693,18 @@ those tests would protect.
 **Codename:** Murex
 **Canonical slug:** public-readonly-instrument-fact-api
 **Track:** public-observation-surface
-**Implementation decision:** B — SHARED-SURFACE-DESIGN-ONLY
+**Implementation decision:** **A — SHARED-SURFACE-IMPLEMENTABLE**, over
+Weatherwatch and Labelwatch, with Driftwatch deliberately out-of-surface and
+contributing only reduced aggregates through the existing `facts.sqlite` path.
+*(Amended from B at closeout — see §13.1.)*
 **Result classification:** shared envelope sustained for Weatherwatch and
-Labelwatch, with the brief's proposed envelope corrected; disproved as a
-three-instrument surface at this time on custody grounds; prerequisites named
-per instrument.
+Labelwatch, with the brief's proposed envelope corrected; **not** a
+three-instrument surface — Driftwatch's identity-bearing state stays private by
+architecture, not by deferral.
 **Public surface created:** none.
 **Code changed:** none.
-**Closeout:** §13 (2026-08-31) — classification confirmed
-`B / IMPLEMENTATION-NOT-ATTEMPTED / NO-MUREX-DEPLOYMENT-EXISTS`.
+**Closeout:** §13 (2026-08-31) —
+`A / IMPLEMENTATION-NOT-STARTED / PREREQUISITES-P1..P7-OPEN`.
 
 ---
 
@@ -695,7 +715,10 @@ Track: public-observation-surface
 
 Breakwater discharged the Murex prerequisites that were defects in their own
 right, and corrected this record. **It did not implement the Murex surface, and
-the Murex decision is unchanged: B — SHARED-SURFACE-DESIGN-ONLY.**
+the Murex decision was unchanged at that time: B — SHARED-SURFACE-DESIGN-ONLY.**
+*(The decision was subsequently amended to A at closeout — §13.1. Breakwater
+itself is one of the reasons it could be: it discharged the Labelwatch defects
+§7 cited as grounds for refusing A.)*
 
 ### 12.1 What Breakwater changed
 
@@ -759,14 +782,32 @@ after the decision and neither one bears on the decision.
 
 ### 13.1 Final classification
 
-**Architectural decision:** B — SHARED-SURFACE-DESIGN-ONLY
-**Implementation status:** IMPLEMENTATION-NOT-ATTEMPTED
+**Architectural decision:** **A — SHARED-SURFACE-IMPLEMENTABLE**
+(Weatherwatch + Labelwatch; Driftwatch out-of-surface by architecture)
+**Implementation status:** IMPLEMENTATION-NOT-STARTED
 **Production status:** NO-MUREX-DEPLOYMENT-EXISTS
+**Open prerequisites:** P1–P7 (§13.8)
 
-The three-line form `SHARED-SURFACE-IMPLEMENTABLE / IMPLEMENTATION-QUALIFIED /
-PRODUCTION-DEPLOYMENT-BLOCKED` was considered and **rejected**: it requires an
-implementation to qualify, and there is none. Claiming it would convert a
-deliberate decision not to build into a build that deployment happened to stop.
+**Amended from B at closeout.** B — SHARED-SURFACE-DESIGN-ONLY rested on two
+stated grounds, and neither survives:
+
+1. *No identified consumer.* Retired as a category error for a public,
+   anonymous, read-only surface (§13.9). Its consumers are unknown by design.
+2. *Driftwatch custody.* This was never a reason the shared surface could not
+   exist; it was a reason Driftwatch could not join it. That is now settled
+   positively rather than deferred: Driftwatch's identity-bearing state stays
+   private and its contribution flows reduced through `facts.sqlite`. The
+   two-instrument surface §2.10 and §3 found semantically real is unaffected.
+
+What remains between here and a running API is P1–P7 — enumerable engineering,
+not architectural doubt. "Design-only" implied the design was terminal. It is
+not; it is unbuilt, which is a different state and should not be recorded as
+the same one.
+
+The form `IMPLEMENTATION-QUALIFIED / PRODUCTION-DEPLOYMENT-BLOCKED` remains
+**rejected**: qualifying requires an implementation, and there is none. Nothing
+was built and nothing was blocked from deploying. `IMPLEMENTATION-NOT-STARTED`
+with open prerequisites is the accurate state.
 
 Verified mechanically at closeout: no `/api/v1/` route, no fact-bundle HTTP
 endpoint, and no Murex-named module or test exists in any of the three
@@ -953,11 +994,94 @@ firehose, webhooks, streaming, an SDK, authentication tiers, a write or control
 API, a new daemon, a shared semantic runtime, a user-facing dashboard, and any
 per-DID, per-handle, or cohort-resolvable surface.
 
-### 13.8 Remaining prerequisites
+### 13.8 Remaining prerequisites — engineering only
 
-Unchanged from §8 and not discharged by this closeout: Weatherwatch §8.1;
-Labelwatch §8.2.3–§8.2.6; Driftwatch §8.3 (the publication boundary is now
-*enforced* for the identity routes, but Driftwatch joining the shared surface
-remains a separate custody decision, not a code task). The binding
-prerequisite remains the one named in §10: **a real consumer**. None has been
-identified, and implementation should not begin until one is.
+The consumer gate is retired (§13.9). What remains are named, finishable
+engineering tasks. None is architectural doubt; each is a thing that must be
+true before this estate can make a durable promise to an anonymous reader.
+
+**P1 — Unify the Labelwatch verdict implementation.** `report.py` reimplements
+the network-weather verdict inline instead of calling
+`frontdoor.network_weather`, and the two vocabularies have drifted:
+`conflicted` exists only in the `report.py` copy, so `overview.json` can
+publish a signal `index.html` cannot render. One verdict, one implementation.
+This is a contract-integrity defect and is a hard precondition for publishing
+Labelwatch weather as a public fact.
+
+**P2 — Automated assertion of the externally reachable HTTP surface.** A test
+that enumerates what is publicly routable per host and fails when the set
+changes. The 2026-08-31 Driftwatch exposure persisted for roughly six months
+and was found by reading a Caddyfile by hand. Adding a public surface without
+this control repeats the conditions that produced it.
+
+**P3 — A published fact manifest.** An explicit, machine-checkable allow-list
+of which facts are public, per instrument. Publication must be an additive,
+deliberate act — never the default consequence of a reducer emitting something
+new. This is the mechanism behind "only deliberately selected public facts are
+exposed."
+
+**P4 — A compatibility policy for the versioned contract.** The vocabulary
+already exists: seven namespaced contract identifiers
+(`weatherwatch.composition.bundle/v1`, `project.ops.status/v1`, and so on).
+There is no policy governing them. Required: what a version guarantees, what
+may be added within it, what forces a new version, and how an old version is
+retired. Without this, "a versioned contract does not silently change meaning"
+is an aspiration rather than a property. Note that Labelwatch separately
+carries a hardcoded `"api_version": "v0"` in `report.py`, which is a label, not
+a contract.
+
+**P5 — Correction and supersession semantics.** Facts get restated when a
+reducer is fixed or a window is recomputed. The contract needs a normal way to
+express that: `acquired_at` already distinguishes observation time from window
+time; what is missing is an explicit revision or validity/supersession marker
+so a consumer can tell a corrected fact from a new one and order two statements
+about the same window. This is ordinary API design and is the correct answer to
+restatement — cached prior results are not a blocker to publication.
+
+**P6 — Mechanically enforced Driftwatch exclusion.** Driftwatch identity-bearing
+state stays private. Its contribution reaches the public surface only after
+aggregate reduction, through the existing `facts.sqlite` sidecar. This must be
+asserted by a prohibited-field test over published output — no DIDs, handles,
+stable identity hashes, or resolvable cohorts — not merely documented. §6 is
+the specification for that test.
+
+**P7 — Restore and monitor the facts sidecar, if Driftwatch's contribution is
+in scope.** `ENABLE_FACTS_EXPORT` is currently `false` and
+`/opt/driftwatch/deploy/data/facts.sqlite` does not exist, while Labelwatch's
+`config.toml` still declares that path. Labelwatch degrades honestly
+(`{"status": "no_facts", "caveats": ["facts.sqlite not attached"]}`) and logs a
+warning nobody reads. Whether the export is off deliberately — plausibly a
+consequence of the 2026-08-12 volume exhaustion — should be established before
+it is switched on. A declared-but-missing cross-instrument input should be
+loud.
+
+Carried forward from §8, unchanged: Weatherwatch §8.1; Labelwatch
+§8.2.3–§8.2.6.
+
+### 13.9 Scope correction (2026-08-31)
+
+Two requirements were removed from this record because they were not
+engineering requirements.
+
+**Retired: the known-consumer gate.** §10 previously held that prerequisites
+"should not be executed until at least one intended consumer's needs are
+known." The intended surface is public, anonymous and read-only. Its consumers
+are unknown by construction, so the gate was unsatisfiable in principle and
+functioned as an indefinite hold rather than a criterion. Replaced by P1–P7,
+which are finishable.
+
+**Retired: protecting consumers from misreading accurate data.** A requirement
+had been drafted that the published fact set be chosen to survive adversarial
+summarisation — that facts be selected so a third party could not build an
+overconfident headline from a `DEGRADED` fact at low coverage. That is not a
+publication-boundary concern. The boundary's obligation is that facts are
+correctly represented and correctly qualified: state, coverage, window,
+provenance and freshness preserved and clearly specified. What a consumer
+concludes from accurately represented public data is the consumer's
+responsibility. The requirement is withdrawn and should not be reintroduced.
+
+What the boundary does still guarantee is unchanged and unweakened: no private
+or identity-bearing Driftwatch internals leak (P6); only deliberately selected
+facts are exposed (P3); fields have clear semantics (P4); window, provenance,
+coverage, freshness and caveats are preserved where applicable (§3, §4); and a
+versioned contract does not silently change meaning (P4).
