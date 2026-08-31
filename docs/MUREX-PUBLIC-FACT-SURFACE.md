@@ -9,11 +9,13 @@ performed.**
 
 Implementation decision: **A — SHARED-SURFACE-IMPLEMENTABLE**
 (Weatherwatch + Labelwatch; Driftwatch out-of-surface by architecture)
-*Amended from B at closeout, 2026-08-31 — see §13.1. Sections 7 and 12 record
-the original decision and are preserved as written.*
+Status: **IMPLEMENTED AND LIVE** at <https://api.neutral.zone/atproto/> —
+see §14.
+*Amended from B on 2026-08-31 (§13.1); implemented the same day (§14).
+Sections 7 and 12 record the original decision and are preserved as written.*
 Result classification: **shared envelope sustained for two instruments; not a
-three-instrument surface; implementation not started; prerequisites P1–P7 open
-(§13.8).**
+three-instrument surface; implemented as a separate publication service;
+prerequisites P1–P7 discharged (§14.4).**
 
 Campaign identity and result classification are separate. This document is the
 campaign record; it confers no publication authority and does not assert that
@@ -1085,3 +1087,114 @@ or identity-bearing Driftwatch internals leak (P6); only deliberately selected
 facts are exposed (P3); fields have clear semantics (P4); window, provenance,
 coverage, freshness and caveats are preserved where applicable (§3, §4); and a
 versioned contract does not silently change meaning (P4).
+
+
+---
+
+## 14. Implementation (2026-08-31)
+
+Murex is built and serving. It is a separate, small publication service, not a
+feature added to any instrument.
+
+### 14.1 Public surface
+
+    https://api.neutral.zone/atproto/               documentation
+    https://api.neutral.zone/atproto/openapi.json   OpenAPI 3.1
+    https://api.neutral.zone/atproto/v1/...         the versioned facts
+
+`api.neutral.zone` is a general API origin. This service claims only the
+`/atproto/` namespace; the root is deliberately unclaimed and returns a 404
+naming the namespaces that exist, so sibling APIs can be mounted later without
+touching this one.
+
+| route | serves |
+|---|---|
+| `GET /atproto/v1/instruments` | which instruments contribute, and whether each is readable now |
+| `GET /atproto/v1/labelwatch/overview` | labeler counts, reachability census, alerts by rule, weather verdict, observation adequacy |
+| `GET /atproto/v1/weatherwatch/conditions` | aggregate conditions with freshness and interval coverage |
+| `GET /atproto/v1/weatherwatch/metrics` | per-collection totals and mean rates, with observed/unobserved window counts |
+| `GET /atproto/health` | service liveness; not a fact contract |
+
+### 14.2 Architecture, and why it cannot hurt the instruments
+
+The service reads the materialized JSON artifacts the instruments already
+publish — `/var/www/labelwatch/overview.json` and
+`/var/www/weatherwatch/summary.json` — and reshapes them under a versioned
+contract. It holds no database handle, opens no socket to an instrument, and
+runs as its own unprivileged user with `ReadOnlyPaths` over exactly those two
+directories. No request from the Internet can cause a query against any
+instrument's operational store. The worst failure available to it is to stop
+serving.
+
+Python standard library only at runtime. One systemd unit bound to
+`127.0.0.1:8425`. Caddy routes only `/atproto` and `/atproto/*` to it; nothing
+is proxied wholesale, and no application-level auth is relied on to define the
+boundary, because there is nothing to authenticate to.
+
+Repository: `atproto-facts-api`, commit `8073d38`.
+
+### 14.3 How the boundary is enforced rather than documented
+
+Publication is an **allow-list**. Every published field is selected by name in
+`facts.py`; nothing is passed through wholesale. A new field appearing inside
+an instrument artifact cannot reach the public surface without someone adding
+it deliberately. `tests/test_publication_boundary.py` proves this by poisoning
+a fixture with `operator_secret`, `subject_dids` and an internal database path
+and asserting none of it appears.
+
+Driftwatch is not published. It is absent from the route table, asserted absent
+by test, and listed in `/v1/instruments` as `NOT_PUBLISHED` with the reason —
+so a consumer learns the boundary exists rather than merely finding nothing.
+
+Labeler DIDs **are** published, deliberately: a labeler is a public moderation
+service with a discoverable endpoint, not a person, and the instruments already
+publish those identifiers. A test asserts that every DID appearing anywhere in
+a response is one of the declared `labeler_did` values, so a subject identity
+cannot arrive by another route.
+
+The epistemics survive the boundary. Coverage, window, freshness, provenance
+and caveats travel with each fact, and a test asserts that when Labelwatch's
+adequacy is `partial` or `unobserved` the response cannot contain `calm` and
+`supports_negative_claim` is false. A missing artifact yields `503`, never a
+zeroed reading — §4's rule that absence of evidence is not evidence of absence
+is now enforced at the serialization boundary, not just described.
+
+### 14.4 Prerequisites P1–P7, discharged
+
+| | status |
+|---|---|
+| **P1** unify the Labelwatch verdict | **Done.** `report.py` no longer reimplements it, `conflicted` moved into the canonical `frontdoor.network_weather`, and the verdict is computed **once** per report. Prepared by Codex (`eaa0fe6`), corrected (`2ad2710`) because two separate calls to the canonical implementation can still diverge across a long report, merged (`89c15c4`). Integrated and pushed; **not deployed** — Labelwatch production still runs `114aa41`. |
+| **P2** externally reachable surface assertion | **Done.** `tests/test_external_surface.py` asserts what is public, what must 404, and that Driftwatch's operational routes stay unreachable. Opt-in via `FACTSAPI_EXTERNAL=1`. 28 assertions pass against production. |
+| **P3** published fact manifest | **Done.** The allow-list in `facts.py` plus the route table in `routes.py`, both enumerated by tests. |
+| **P4** compatibility policy | **Done.** Published on the documentation page and carried in each response's `contract` string. Within `/atproto/v1`: field meanings do not silently change, additive fields may appear, removal or reinterpretation requires `/atproto/v2`. No endpoint-specific exceptions. |
+| **P5** correction/supersession semantics | **Done.** For two responses describing the same `window`, the later `generated_at` supersedes. `ETag` changes when the artifact changes. Documented, not merely implied. |
+| **P6** mechanically enforced Driftwatch exclusion | **Done.** See §14.3. |
+| **P7** facts sidecar decision | **Resolved, and the guess was wrong.** `ENABLE_FACTS_EXPORT` was not disabled by the August volume exhaustion. It was a 2026-05-08 containment toggle in `docker-compose.override.yml` citing WAL-truncate contention — writer parked in `_maybe_wal_truncate` in 76% of stall windows — which said "re-enable individually after WAL-truncate fix lands." The fix landed on 2026-05-13 (`391a37c`, pressure-aware checkpoint that skips TRUNCATE under backlog), plus `36e334a`. The toggle was never lifted. Re-enabled 2026-08-31 after verifying `checkpoint_busy=0`, WAL 35.8 MB, `stream_lag 0.0s`, `drop_frac 0.0`, disk 37.6% used. See §14.5. |
+
+### 14.5 The facts sidecar, honestly
+
+Re-enabling is **not** a dependency of this API. v1 publishes nothing from
+Driftwatch, so the service is unaffected either way. It was re-enabled because
+Labelwatch's hosting-locus analysis had been degrading without it — honestly
+(`{"status": "no_facts"}`) but silently — for roughly four months.
+
+The first pass is a cold backfill and is expensive: it had built a 1.6 GB
+`facts_work.sqlite` with a 742 MB WAL before producing a snapshot. During it,
+`checkpoint_busy` rose from 0 to 59 — the very metric the original containment
+was about. The harm indicators stayed clean (`stream_lag_s 0.0`,
+`drop_frac 0.0`, ingest 82.7/s against an 84.6 baseline, disk 38.8% used), so
+it was allowed to proceed rather than reverted mid-backfill.
+
+The revert criterion is written into the override file beside the toggle: set
+it back to `"false"` if `checkpoint_busy` or `stream_lag` keep climbing. This
+is the one item that deserves a look after steady state is reached, and it is
+an instrument-health question, not an API question.
+
+### 14.6 What was still not built
+
+No GraphQL, SQL-over-HTTP, filtering or query DSL, firehose, webhooks,
+streaming, SDK, authentication tier, write or control API, new daemon, shared
+semantic runtime, or per-DID surface. No endpoint was added merely because a
+field existed: the artifacts contain far more than is published, including
+Weatherwatch's 1,440 per-window rows and Labelwatch's 17 MB alert log, which
+are deliberately not exposed.
