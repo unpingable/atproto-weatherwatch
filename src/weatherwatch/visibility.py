@@ -234,23 +234,23 @@ def _database_concerns(access: dict, snapshot: dict | None,
     if not access["exists"]:
         persistence = _concern(
             "weatherwatch.persistence.access", ABSENT,
-            "durable Weatherwatch database has not been created", access)
+            "durable Weatherwatch database has not been created", access, _iso(now))
     elif not access["readable"] or not access["write_transaction_available"]:
         persistence = _concern(
             "weatherwatch.persistence.access", DEGRADED,
             "durable state is not both readable and write-transaction capable",
-            access)
+            access, _iso(now))
     else:
         persistence = _concern(
             "weatherwatch.persistence.access", PRESENT,
             "durable state is readable and a write transaction can be acquired",
-            access)
+            access, _iso(now))
 
     if snapshot is None:
         unavailable = [
             persistence,
             _concern("weatherwatch.persistence.continuity", UNKNOWN,
-                     "cursor/meta coherence cannot be evaluated", access),
+                     "cursor/meta coherence cannot be evaluated", access, _iso(now)),
         ]
         for cid, summary in (
             ("weatherwatch.observation.coverage", "observation coverage is unavailable"),
@@ -305,7 +305,7 @@ def _database_concerns(access: dict, snapshot: dict | None,
         DEGRADED if coherence_failures else PRESENT,
         ("cursor/meta persistence has coherence failures" if coherence_failures
          else "cursor/meta persistence is structurally coherent"),
-        {**continuity_facts, "failures": coherence_failures})
+        {**continuity_facts, "failures": coherence_failures}, _iso(now))
 
     ctx = _window_context(snapshot, now)
     run, health = ctx["run"], ctx["health"]

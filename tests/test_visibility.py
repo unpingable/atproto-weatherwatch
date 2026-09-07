@@ -95,6 +95,7 @@ def test_empty_checkout_is_explicitly_absent_or_unknown_not_green(tmp_path):
     assert len(concerns) == len(visibility.CONCERNS)
     assert all(item["required"] for item in concerns.values())
     assert concerns["weatherwatch.persistence.access"]["state"] == "ABSENT"
+    assert concerns["weatherwatch.persistence.access"]["observed_at"] == NOW.isoformat().replace("+00:00", "Z")
     assert concerns["weatherwatch.observation.coverage"]["state"] == "ABSENT"
     assert concerns["weatherwatch.acquisition.connection"]["state"] == "UNKNOWN"
     assert concerns["weatherwatch.aggregate.production"]["state"] == "ABSENT"
