@@ -316,3 +316,16 @@ the joke; the instrument must not certify it.
 
 Licensed under either Apache-2.0 or MIT, at your option. See
 [`LICENSE-APACHE`](LICENSE-APACHE) and [`LICENSE-MIT`](LICENSE-MIT).
+
+## Offline demonstration and operations contract
+
+A bounded demonstration replays the repository fixture through the real
+classifier, accumulator, SQLite, report, and status paths without network
+access or persistent state:
+
+    PYTHONPATH=src python3 scripts/demo_offline.py
+
+The generic operations envelope is vendored under `.ops/` and pinned by
+`.ops/contract.lock.json` to local `atproto-ops` release candidate
+`v1.0.0-rc.1`. The status binding deliberately uses the dependency-light
+`weatherwatch.visibility` entry point.

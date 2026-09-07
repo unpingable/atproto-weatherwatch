@@ -2,5 +2,5 @@ schema = "project.observation-binding/v1"
 producer = "weatherwatch.status"
 output_schema = "project.ops.status/v1"
 kind = "exec/v1"
-argv = ["python3", "-m", "weatherwatch.cli", "status", "--json"]
+argv = ["python3", "-m", "weatherwatch.visibility", "--format", "json"]
 environment = { PYTHONPATH = "src" }

@@ -6,7 +6,7 @@
   "required": ["schema", "project", "concerns"],
   "properties": {
     "schema": {"const": "project.concerns/v1"},
-    "project": {"type": "string", "minLength": 1},
+    "project": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._/-]*$"},
     "concerns": {
       "type": "array",
       "minItems": 1,
@@ -15,9 +15,9 @@
         "additionalProperties": false,
         "required": ["id", "question", "profile", "required", "description"],
         "properties": {
-          "id": {"type": "string", "minLength": 1},
-          "question": {"type": "string", "minLength": 1},
-          "profile": {"type": "string", "minLength": 1},
+          "id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._/-]*$"},
+          "question": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._/-]*$"},
+          "profile": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._/-]*$"},
           "required": {"type": "boolean"},
           "description": {"type": "string", "minLength": 1}
         }

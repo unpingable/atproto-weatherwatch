@@ -8,6 +8,7 @@ missing facts into present health.
 
 from __future__ import annotations
 
+import argparse
 import datetime as dt
 import json
 import sqlite3
@@ -711,3 +712,23 @@ def render_human(document: dict) -> str:
         "observation is not NQ admission; historical status is not current qualification.",
     ))
     return "\n".join(lines)
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Dependency-light status entry point for the repository binding."""
+    parser = argparse.ArgumentParser(prog="python -m weatherwatch.visibility")
+    parser.add_argument("--db", default=str(db.DEFAULT_DB_PATH))
+    parser.add_argument("--report-dir", default="build/report")
+    parser.add_argument("--now", default=None)
+    parser.add_argument("--format", choices=("json", "text"), default="text")
+    args = parser.parse_args(argv)
+    now = _parse_time(args.now) if args.now else None
+    if args.now and now is None:
+        parser.error("--now must be an RFC3339 date-time")
+    document = build_status(args.db, args.report_dir, now=now)
+    print(json.dumps(document, indent=2, sort_keys=True) if args.format == "json" else render_human(document))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
