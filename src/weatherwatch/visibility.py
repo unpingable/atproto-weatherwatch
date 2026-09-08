@@ -659,7 +659,7 @@ def build_status(db_path: str | Path = db.DEFAULT_DB_PATH,
         "schema": SCHEMA,
         "generated_at": _iso(now),
         "project": "weatherwatch",
-        "manifest": {"schema": MANIFEST_SCHEMA, "path": MANIFEST_PATH},
+        "manifest": {"schema": MANIFEST_SCHEMA, "path": ".ops/concerns.toml"},
         "producer": {"id": "weatherwatch.status", "version": COLLECTOR_VERSION},
         "authority": {
             "declaration_is_observation": False,
