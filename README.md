@@ -312,6 +312,10 @@ receipts.
 funny and even right, but the telemetry does not entail them. Humans may make
 the joke; the instrument must not certify it.
 
+## Operational history
+
+- [2026-09-08: lock retry repair and extended observation](docs/2026-09-08-LOCK-RETRY-OBSERVATION.md)
+
 ## License
 
 Licensed under either Apache-2.0 or MIT, at your option. See
