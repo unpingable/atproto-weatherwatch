@@ -61,19 +61,19 @@ included in this repository account.
 
 ## Follow-up after the other observatories' cutovers
 
-A further bounded capture at20:03 UTC observed the unchanged RC5 runtime during
-the cohort's new production workload. From the earlier18:09 endpoint, the same
-collector run advanced successful ledger sequence249..304 with no gaps,
+A further bounded capture at 20:03 UTC observed the unchanged RC5 runtime during
+the cohort's new production workload. From the earlier 18:09 endpoint, the same
+collector run advanced successful ledger sequence 249..304 with no gaps,
 monotonic counters, and zero reported backpressure drops.
 
-All15 failed flushes in that interval had later successful ledger rows, at
-most115.004seconds after failure. The selected error-class log entries shared
+All 15 failed flushes in that interval had later successful ledger rows, at
+most 115.004 seconds after failure. The selected error-class log entries shared
 those failure timestamps. Contention remained observable and recoverable within
 the captured interval.
 
-Natural detectors at18:57 and19:57 UTC reported367 and362 episodes. Twenty-three
+Natural detectors at 18:57 and 19:57 UTC reported 367 and 362 episodes. Twenty-three
 field jobs and twenty-three publication jobs completed; the latest pair finished
-at20:01 UTC. The aggregate cursor advanced beyond the18:49 observation, and the
+at 20:01 UTC. The aggregate cursor advanced beyond the 18:49 observation, and the
 collector remained active with zero restarts. No manual job execution was used
 to produce this evidence.
 
