@@ -25,7 +25,9 @@ from .report import PUBLICATION_INTERVAL_S
 
 SCHEMA = "project.ops.status/v1"
 MANIFEST_SCHEMA = "project.concerns/v1"
-MANIFEST_PATH = ".ops/concerns.toml"
+REPO_MANIFEST_PATH = Path(__file__).resolve().parents[2] / ".ops" / "concerns.toml"
+MANIFEST_PATH = (REPO_MANIFEST_PATH if REPO_MANIFEST_PATH.is_file()
+                 else Path(__file__).resolve().parent / "_ops" / "concerns.toml")
 RUNTIME_META_KEY = "collector_runtime:v1"
 
 PRESENT = "PRESENT"
@@ -631,8 +633,7 @@ def build_status(db_path: str | Path = db.DEFAULT_DB_PATH,
     concerns.extend(_report_concerns(report_dir, now))
     by_id = {item["concern_id"]: item for item in concerns}
     ordered = [by_id[cid] for cid, _, _ in CONCERNS]
-    manifest_path = Path(__file__).resolve().parents[2] / MANIFEST_PATH
-    with manifest_path.open("rb") as handle:
+    with MANIFEST_PATH.open("rb") as handle:
         declarations = tomllib.load(handle)["concerns"]
     declared = {item["id"]: item for item in declarations}
     generic_concerns = []
