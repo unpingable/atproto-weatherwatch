@@ -7,6 +7,7 @@ name = "weatherwatch"
 version = "0.1.0rc1"
 description = "Aggregate ATProto event weather telemetry. Counts the weather, keeps no people."
 requires-python = ">=3.10"
+license = {text = "MIT OR Apache-2.0"}
 dependencies = ["websockets>=10.4"]
 
 [project.optional-dependencies]
