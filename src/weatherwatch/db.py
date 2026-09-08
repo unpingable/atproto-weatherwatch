@@ -118,7 +118,8 @@ def connect(path: Path | str = DEFAULT_DB_PATH) -> sqlite3.Connection:
 
 def init_db(conn: sqlite3.Connection) -> None:
     conn.executescript(SCHEMA)
-    set_meta(conn, "schema_version", SCHEMA_VERSION)
+    if get_meta(conn, "schema_version") != SCHEMA_VERSION:
+        set_meta(conn, "schema_version", SCHEMA_VERSION)
 
 
 # --- meta ------------------------------------------------------------------

@@ -11,7 +11,7 @@ From the repository root, after copying the reviewed wheelhouse to
 ```sh
 python3 -m venv /tmp/weatherwatch-recovery-venv
 /tmp/weatherwatch-recovery-venv/bin/python -m pip install \
-  --no-index --find-links WHEELHOUSE weatherwatch==0.1.0rc2
+  --no-index --find-links WHEELHOUSE weatherwatch==0.1.0rc3
 /tmp/weatherwatch-recovery-venv/bin/python scripts/demo_offline.py \
   --output /tmp/weatherwatch-demo
 /tmp/weatherwatch-recovery-venv/bin/python scripts/recover_synthetic.py \
