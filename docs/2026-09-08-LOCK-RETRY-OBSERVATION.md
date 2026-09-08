@@ -58,3 +58,27 @@ Exact selected production receipts and capture hashes are retained privately
 under campaign `2026-09-08-observatory-correctness-recovery`, lane
 `baseline-observation`. No production records or deployment configuration are
 included in this repository account.
+
+## Follow-up after the other observatories' cutovers
+
+A further bounded capture at20:03 UTC observed the unchanged RC5 runtime during
+the cohort's new production workload. From the earlier18:09 endpoint, the same
+collector run advanced successful ledger sequence249..304 with no gaps,
+monotonic counters, and zero reported backpressure drops.
+
+All15 failed flushes in that interval had later successful ledger rows, at
+most115.004seconds after failure. The selected error-class log entries shared
+those failure timestamps. Contention remained observable and recoverable within
+the captured interval.
+
+Natural detectors at18:57 and19:57 UTC reported367 and362 episodes. Twenty-three
+field jobs and twenty-three publication jobs completed; the latest pair finished
+at20:01 UTC. The aggregate cursor advanced beyond the18:49 observation, and the
+collector remained active with zero restarts. No manual job execution was used
+to produce this evidence.
+
+The same limits apply: ledger continuity and reported drop counts do not expose
+peak buffer depth or oldest pending-event age, prove independent completeness,
+or establish indefinite recovery. Exact selected receipts are retained in the
+same private campaign lane under `WEATHER-POST-CUTOVER.md`. This account is a
+documentation update; the observed runtime remains `1d62e2e`.
