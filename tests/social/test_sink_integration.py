@@ -138,6 +138,33 @@ def test_retention_horizon_prunes_on_flush(tmp_path):
     conn.close()
 
 
+def test_locked_flush_retains_batch_and_retries_after_backoff(tmp_path):
+    path = tmp_path / "social.sqlite"
+    sink = SocialSink.open(path, run_id="run-x", flush_interval_s=60)
+    sink.conn.execute("PRAGMA busy_timeout=25")
+    blocker = store.connect(path)
+    from .conftest import edge as mk
+
+    sink.writer.add_edge(mk("did:plc:a", "did:plc:t", BASE_US))
+    blocker.execute("BEGIN IMMEDIATE")
+    try:
+        sink.flush(BASE_US)
+        assert sink.errors == 1
+        assert sink.writer.pending == 1
+        assert sink.health_snapshot()["stored_edges"] == 0
+        assert sink.writer.should_flush(BASE_US + 30 * 1_000_000) is False
+        assert sink.conn.execute("SELECT COUNT(*) FROM edge_event").fetchone()[0] == 0
+    finally:
+        blocker.rollback()
+        blocker.close()
+
+    sink.maybe_flush(BASE_US + 61 * 1_000_000)
+    assert sink.writer.pending == 0
+    assert sink.health_snapshot()["stored_edges"] == 1
+    assert sink.conn.execute("SELECT COUNT(*) FROM edge_event").fetchone()[0] == 1
+    sink.conn.close()
+
+
 def _weather_state(conn, run_id: str) -> dict:
     """Everything the weather lane persists for a run, as comparable values."""
     buckets = conn.execute(

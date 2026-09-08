@@ -54,6 +54,12 @@ MAX_BUFFER_ROWS = 20_000
 #: durability windows an order of magnitude apart.
 DEFAULT_FLUSH_INTERVAL_S = 60
 
+# A failed flush must not turn the collector's per-window callback into a busy
+# loop. Keep the batch in memory and wait one normal flush interval before the
+# next write attempt. The bounded buffer/backpressure counter remains the hard
+# memory and loss boundary.
+DEFAULT_LOCK_RETRY_INTERVAL_S = 60
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (
     key   TEXT PRIMARY KEY,
@@ -239,7 +245,9 @@ class EdgeWriter:
         self.batch_rows = batch_rows
         self.retention_us = retention_us
         self.flush_interval_us = int(flush_interval_s * 1_000_000)
+        self.lock_retry_interval_us = DEFAULT_LOCK_RETRY_INTERVAL_S * 1_000_000
         self._last_flush_us: int | None = None
+        self._retry_not_before_us: int | None = None
         self._edges: list[EdgeEvent] = []
         self._status: list[StatusEvent] = []
         self._skips: dict[str, int] = {r: 0 for r in SKIP_REASONS}
@@ -282,6 +290,9 @@ class EdgeWriter:
 
     def should_flush(self, now_us: int | None = None) -> bool:
         """Full buffer, or an old one. Never flushes an empty buffer."""
+        if (now_us is not None and self._retry_not_before_us is not None
+                and now_us < self._retry_not_before_us):
+            return False
         if self.pending >= self.batch_rows:
             return True
         if not self.pending or now_us is None:
@@ -294,14 +305,16 @@ class EdgeWriter:
     # -- output ------------------------------------------------------------
 
     def flush(self, now_us: int) -> int:
-        """Commit buffered rows plus a health row. Returns rows written."""
-        edges, status = self._edges, self._status
-        self._edges, self._status = [], []
-        self._last_flush_us = now_us
-        written = 0
+        """Commit buffered rows plus health, retaining the batch on failure."""
+        edges, status = list(self._edges), list(self._status)
+        written = len(edges) + len(status)
+        next_flush_seq = self._flush_seq + 1
+        next_stored_edges = self._stats.stored_edges + len(edges)
+        next_stored_status = self._stats.stored_status + len(status)
 
-        self.conn.execute("BEGIN")
         try:
+            # Acquire the single SQLite writer slot before doing batch work.
+            self.conn.execute("BEGIN IMMEDIATE")
             if edges:
                 self.conn.executemany(
                     "INSERT OR IGNORE INTO edge_event(observed_us, actor_did, "
@@ -311,8 +324,6 @@ class EdgeWriter:
                       e.subject_kind, e.subject_ref, e.rkey, e.rev, e.cid,
                       e.record_created_at) for e in edges],
                 )
-                written += len(edges)
-                self._stats.stored_edges += len(edges)
             if status:
                 self.conn.executemany(
                     "INSERT OR IGNORE INTO status_event(observed_us, actor_did, "
@@ -320,17 +331,13 @@ class EdgeWriter:
                     [(s.observed_us, s.actor_did, s.active, s.status)
                      for s in status],
                 )
-                written += len(status)
-                self._stats.stored_status += len(status)
-
-            self._flush_seq += 1
             self.conn.execute(
                 "INSERT OR REPLACE INTO sink_health(run_id, flush_seq, "
                 "flushed_at_us, seen, stored_edges, stored_status, "
                 "dropped_backpressure, skips_json, first_event_us, "
                 "last_event_us) VALUES(?,?,?,?,?,?,?,?,?,?)",
-                (self.run_id, self._flush_seq, now_us, self._stats.seen,
-                 self._stats.stored_edges, self._stats.stored_status,
+                (self.run_id, next_flush_seq, now_us, self._stats.seen,
+                 next_stored_edges, next_stored_status,
                  self._stats.dropped_backpressure, stable_json(self._skips),
                  self._first_us, self._last_us),
             )
@@ -344,8 +351,20 @@ class EdgeWriter:
 
             self.conn.execute("COMMIT")
         except Exception:
-            self.conn.execute("ROLLBACK")
+            if self.conn.in_transaction:
+                self.conn.execute("ROLLBACK")
+            # The failed attempt is still an attempt for cadence purposes. It
+            # must not re-arm the age clock only after the backoff expires.
+            self._last_flush_us = now_us
+            self._retry_not_before_us = now_us + self.lock_retry_interval_us
             raise
+        del self._edges[:len(edges)]
+        del self._status[:len(status)]
+        self._last_flush_us = now_us
+        self._retry_not_before_us = None
+        self._flush_seq = next_flush_seq
+        self._stats.stored_edges = next_stored_edges
+        self._stats.stored_status = next_stored_status
         return written
 
     def health_snapshot(self) -> dict:

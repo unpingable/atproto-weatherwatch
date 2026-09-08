@@ -241,6 +241,14 @@ Guards added with the publication, not assumed:
 `assert_identity_free()` at the projection boundary and again in `api.build()`;
 `deploy/publish.sh`'s privacy gate extended with an `a:[0-9a-f]{12}` arm for
 salted actor tokens — an arm that should never fire, which is why it is there.
+
+The collector's social writer retains a failed in-memory batch when another
+process owns SQLite's writer slot and defers its next attempt by one normal
+60-second flush interval. A successful retry commits the retained batch and
+its health row together. This avoids converting transient contention into an
+immediate lost batch or a tight retry loop. It does not remove SQLite's
+single-writer rule: continued contention can still fill the 20,000-row bounded
+buffer, after which `dropped_backpressure` is the explicit loss counter.
 The disclosure rules above are separate from those identifier-shape tripwires.
 
 ## What would need re-justification
