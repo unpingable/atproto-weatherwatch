@@ -160,7 +160,8 @@ def connect(path: Path | str = DEFAULT_EDGE_DB_PATH) -> sqlite3.Connection:
 
 def init_db(conn: sqlite3.Connection) -> None:
     conn.executescript(SCHEMA)
-    set_meta(conn, "social_schema_version", str(SOCIAL_SCHEMA_VERSION))
+    if get_meta(conn, "social_schema_version") != str(SOCIAL_SCHEMA_VERSION):
+        set_meta(conn, "social_schema_version", str(SOCIAL_SCHEMA_VERSION))
     if get_meta(conn, "token_salt") is None:
         # Display tokens are salted per store. Unsalted, a DID hash is
         # reversible by anyone willing to enumerate the DID space, which is
