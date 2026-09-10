@@ -195,7 +195,7 @@ def test_compact_weather_is_explicitly_conditioned_on_the_observer(
     out = tmp_path / "beef"
     report.generate_report(report_db, out)
     html = read_html(out)
-    now = html[html.index('id="network-now"'):html.index("Current conditions")]
+    now = html[html.index('id="network-now"'):html.index("Latest finding")]
     assert SYNTH_ENDPOINT in now
     assert "not a network total" in now
     assert "Coverage" in now and "conditioned" in now
@@ -340,12 +340,16 @@ def test_no_external_resources_and_only_local_navigation(report_db, tmp_path):
     assert "<link" not in html
     hrefs = re.findall(r'href="([^"]+)"', html)
     assert hrefs, "the finding and its receipts should be navigable"
-    assert all(not href.startswith(("http://", "https://", "//"))
+    authored = {
+        "https://bsky.app/profile/neutral.zone",
+        "https://github.com/unpingable/atproto-weatherwatch",
+    }
+    assert all(not href.startswith(("http://", "https://", "//")) or href in authored
                for href in hrefs)
     assert "<iframe" not in html
     # The only // occurrences may be the observation endpoint itself.
     for m in re.findall(r"(?:https?:)?//[^\s\"'<>)]+", html):
-        assert "relay-a.invalid" in m, f"unexpected external reference: {m}"
+        assert ("relay-a.invalid" in m or m.rstrip(".") in authored), f"unexpected external reference: {m}"
 
 
 def test_report_is_marked_noindex(report_db, tmp_path):
@@ -1280,8 +1284,12 @@ def test_share_metadata_does_not_weaken_the_dark_posture(report_db, tmp_path):
         "share tags govern unfurling, not crawling; noindex still stands"
     )
     hrefs = re.findall(r'href="([^"]+)"', html_doc)
-    assert all(not href.startswith(("http://", "https://", "//"))
-               for href in hrefs), "navigation must remain within the artifact"
+    authored = {
+        "https://bsky.app/profile/neutral.zone",
+        "https://github.com/unpingable/atproto-weatherwatch",
+    }
+    assert all(not href.startswith(("http://", "https://", "//")) or href in authored
+               for href in hrefs), "only reviewed operator/source navigation may leave the artifact"
     # every absolute URL in the head must be our own canonical origin
     import re as _re
     for m in _re.findall(r'content="(https?://[^"]+)"', html_doc):

@@ -8,7 +8,7 @@ import re
 from pathlib import Path
 
 from weatherwatch import db, findings, visibility
-from weatherwatch.publication import evaluate_candidate
+from weatherwatch.publication import FAMILY_FRAGMENT, OPERATOR_FRAGMENT, evaluate_candidate
 from tests.conftest import SYNTH_BASE, SYNTH_ENDPOINT, build_run
 
 
@@ -287,6 +287,20 @@ def test_publish_gate_refusal_is_not_infrastructure_failure_or_authority(tmp_pat
     concerns = _indexed(visibility.build_status(
         tmp_path / "absent.sqlite", report_dir, now=NOW))
     assert concerns["weatherwatch.publication.gate"]["state"] == "REFUSED"
+
+
+def test_only_exact_reviewed_authored_identity_fragments_are_exempt(tmp_path):
+    report_dir = tmp_path / "report"
+    _candidate(report_dir, generated=NOW, newest=NOW)
+    (report_dir / "index.html").write_bytes(FAMILY_FRAGMENT + OPERATOR_FRAGMENT)
+    assert evaluate_candidate(report_dir)["disposition"] == "PASSED"
+    (report_dir / "index.html").write_bytes(
+        FAMILY_FRAGMENT + OPERATOR_FRAGMENT + b" observed neutral.zone")
+    gate = evaluate_candidate(report_dir)
+    assert gate["disposition"] == "REFUSED"
+    assert any(item.get("shape") == "operator_identity" for item in gate["refusals"])
+    (report_dir / "summary.json").write_text('{"operator":"neutral.zone"}')
+    assert evaluate_candidate(report_dir)["disposition"] == "REFUSED"
 
 
 def test_incomplete_candidate_is_degraded_even_with_fresh_summary(tmp_path):

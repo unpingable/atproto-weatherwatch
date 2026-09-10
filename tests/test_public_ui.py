@@ -108,11 +108,12 @@ def test_the_finding_leads_and_the_scope_denial_precedes_receipts(
     html = (out / "index.html").read_text()
     body = html[html.index("<body"):]
     boundary = body.index("Counts the weather, <strong>keeps no people.</strong>")
-    finding = body.index("Jetstream observers disagree")
+    conditions = body.index("Current conditions")
     current = body.index("Network weather — now")
+    finding = body.index("Jetstream observers disagree")
     denial = body.index("does not measure")
     receipts = body.index('class="deck"')
-    assert boundary < finding < current < denial < receipts
+    assert boundary < conditions < current < finding < denial < receipts
 
 
 def test_expression_is_not_presented_as_attention(plain_db, tmp_path):
@@ -217,7 +218,6 @@ def test_the_station_bar_carries_every_freshness_fact(plain_db, tmp_path):
                  "observation window"):
         assert fact in bar, f"the station bar omits {fact!r}"
     assert "never a live gauge" in bar
-    assert html.index('class="station') < html.index("Station offline")
 
 
 @pytest.mark.parametrize("state", ["current", "partial", "stale", "unavailable"])

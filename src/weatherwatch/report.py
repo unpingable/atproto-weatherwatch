@@ -31,6 +31,7 @@ from pathlib import Path
 from . import (COLLECTOR_VERSION, archive, db, derive, findings, health, query,
                timeutil)
 from .query import Series, WindowPoint
+from .publication import OPERATOR_FRAGMENT
 from .social import section as _social_section
 from .social import api as _social_api
 from .social import projection as _social_projection
@@ -168,7 +169,11 @@ CONDITION_COLORS = {
     "unknown": "var(--muted)",
 }
 
-STYLE = """
+_VENDORED_INSTRUMENTS = Path(__file__).resolve().parent / "_instruments"
+_NEUTRAL_CSS = (_VENDORED_INSTRUMENTS / "neutral.css").read_text(encoding="utf-8").replace(
+    'url("fonts/', 'url("/fonts/')
+
+STYLE = _NEUTRAL_CSS + """
 /* Typography carries most of the difference between an instrument and a
    console. Prose, labels and headings are set in the reader's UI face; the
    monospace is reserved for things that are literally machine text —
@@ -177,12 +182,9 @@ STYLE = """
    every sentence look like log output, which is what a visitor then assumed
    it was. No webfont is loaded: this page makes no external requests. */
 :root {
-  --font-sans: system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",
-               Arial,"Noto Sans",sans-serif;
-  --font-serif: Georgia,"Times New Roman",Times,serif;
-  --font-mono: ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
-  --bg:#f4f5f7; --panel:#ffffff; --ink:#15181e; --muted:#666d7c;
-  --rule:#e0e3e9; --accent:#2f6094;
+  --font-sans:var(--nz-sans); --font-serif:var(--nz-serif); --font-mono:var(--nz-mono);
+  --bg:var(--nz-paper); --panel:var(--nz-panel); --ink:var(--nz-ink); --muted:var(--nz-muted);
+  --rule:var(--nz-rule); --accent:var(--nz-signal);
   --ok:#3f8f5f; --seam:#7a6fd0; --lagged:#4f8fbf; --warming:#8a8f9c;
   --partial:#c99a3a; --degraded:#c0632c; --loss:#b03a3a; --gap:#8d2b2b;
   --unobserved:#c9ccd4;
@@ -191,8 +193,8 @@ STYLE = """
 }
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg:#0d0f13; --panel:#151920; --ink:#e7e9ef; --muted:#8d94a4;
-    --rule:#242832; --accent:#7fb2e5;
+    --bg:var(--nz-paper); --panel:var(--nz-panel); --ink:var(--nz-ink); --muted:var(--nz-muted);
+    --rule:var(--nz-rule); --accent:var(--nz-signal);
     --ok:#5fbf85; --seam:#a99bf0; --lagged:#6fb2e0; --warming:#9aa0ae;
     --partial:#e0b45a; --degraded:#e08a4a; --loss:#e05c5c; --gap:#c04545;
     --unobserved:#343945;
@@ -734,7 +736,7 @@ def _station_bar(freshness: dict, latest, generated_at: str) -> str:
     newest = freshness.get("newest_complete_observation_end") or "—"
     age = _hero.age_phrase(newest, generated_at) if newest != "—" else ""
     partial = " · a further window is still filling" if state == "partial" else ""
-    return f"""<div class="station fresh-{_esc(state)}"
+    return f"""<div class="station nz-status-rail fresh-{_esc(state)}"
      data-freshness="{_esc(state)}" role="group" aria-label="observation freshness">
   <div class="flag"><div class="k">observation</div>
     <div class="state">{_esc(state)}</div>
@@ -1509,6 +1511,7 @@ def _finding_page(public_url: str | None) -> str:
 {_finding_share_meta(public_url, finding)}
 <style>{STYLE}</style>
 </head><body><main class="paper">
+<div class="nz-masthead"><span class="nz-family">neutral.zone / instruments</span><span class="nz-product">Weatherwatch</span><nav><a href="../../about/">About</a><a href="#receipts">Methodology</a><a href="https://github.com/unpingable/atproto-weatherwatch">Source</a></nav></div>
 <nav class="paper-nav"><a href="../../">← Weather Watch</a></nav>
 <header>
   <div class="section-eyebrow"><span>Weather Watch finding</span><time>Aug 2026</time></div>
@@ -1582,7 +1585,24 @@ published receipt is not silently refreshed by later report generation.</p>
 </section>
 
 <footer>Finding <span class="mono">{_esc(finding['finding_id'])}</span> ·
-aggregate counts only · no raw events · no account identifiers.</footer>
+aggregate counts only · no raw events · no account identifiers.<br>
+{OPERATOR_FRAGMENT.decode("utf-8")}</footer>
+</main></body></html>"""
+
+
+def _about_page(generated_at: str) -> str:
+    return f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>About · Weatherwatch</title>
+<style>{STYLE}</style></head><body><main class="paper">
+<div class="nz-masthead"><span class="nz-family">neutral.zone / instruments</span><span class="nz-product">Weatherwatch</span><nav><a href="/">Current weather</a><a href="/#receipts">Methodology</a><a href="https://github.com/unpingable/atproto-weatherwatch">Source</a></nav></div>
+<header><p class="nz-eyebrow">About this instrument</p><h1>Weather for ATProto.</h1><p class="paper-lead">Weatherwatch turns aggregate event rates from a named public Jetstream observer into a readable platform-weather report.</p></header>
+<section class="paper-section"><h2>Why it exists</h2><p>ATProto activity is easier to understand as changing conditions than as a wall of counters. The public reading comes first; every source window and derivation remains available beneath it.</p>
+<h2>What it looks at</h2><p>Aggregate create, update, and delete events delivered by the observer named on the report. It retains counts and observation-health records, not raw events.</p>
+<h2>What it does not claim</h2><p>It does not measure people, readership, attention, sentiment, conflict, or a canonical network total. One observer is not the network.</p>
+<h2>Can I verify this?</h2><p>Yes. Read the <a href="/#receipts">methodology and receipts</a>, inspect the machine-readable artifacts, and see the <a href="https://github.com/unpingable/atproto-weatherwatch">source on GitHub</a>.</p>
+<h2 id="privacy">Privacy</h2><p>Published artifacts contain no observation-derived DIDs, handles, record keys, CIDs, AT URIs, or text. Fixed operator identity below is authored accountability metadata, not observed material.</p>
+<h2>Who runs it?</h2><p>{OPERATOR_FRAGMENT.decode("utf-8")} Source code and project history are published by James Beck on GitHub.</p></section>
+<footer>Instrument page generated {_esc(generated_at)} · contact is listed above.</footer>
 </main></body></html>"""
 
 
@@ -1641,14 +1661,16 @@ def _build_html(conn, run_ids, runs, latest, series_map, totals_series,
 <style>{STYLE}</style>
 </head><body><div class="wrap">
 
+<div class="nz-masthead"><span class="nz-family">neutral.zone / instruments</span><span class="nz-product">Weatherwatch</span><nav><a href="/about/">About</a><a href="/#receipts">Methodology</a><a href="https://github.com/unpingable/atproto-weatherwatch">Source</a></nav></div>
+
 <header class="mast observatory">
   <p class="brand-kicker">Weather Watch</p>
-  <h1 class="brand-title">Aggregate ATProto telemetry.</h1>
+  <h1 class="brand-title">ATProto weather, as observed.</h1>
   <p class="brand-line">Counts the weather, <strong>keeps no people.</strong></p>
   <p class="brand-boundary">Production observable. Consumption unobservable.</p>
 </header>
 
-{_latest_finding()}
+{reading}
 
 {_network_now(series_map, health_points, latest, freshness, generated_at)}
 <p class="note">Observed from <span class="mono">{_esc(latest.endpoint)}</span>
@@ -1657,8 +1679,7 @@ over {_esc(_clock(_iso(first * 1_000_000 if first is not None else None)))}
 Counts describe what this endpoint delivered; they are not a claim about the
 network's total activity, and no relay is authoritative or complete.</p>
 
-{reading}
-
+{_latest_finding()}
 {_recent_findings()}
 {_how_to_read()}
 
@@ -1708,6 +1729,7 @@ v{_esc(COLLECTOR_VERSION)} · public artifacts contain no DIDs, handles, record
 keys, CIDs, event-supplied AT URIs or text.
 The bounded local edge custody stated above is not published. Monotonic stream
 time is not evidence of complete observation.
+<br>{OPERATOR_FRAGMENT.decode("utf-8")}
 </footer>
 </div></body></html>"""
 
@@ -1981,6 +2003,9 @@ def generate_report(
         shutil.rmtree(tmp)
     tmp.mkdir(parents=True)
     (tmp / "index.html").write_text(html_doc, encoding="utf-8")
+    about_dir = tmp / "about"
+    about_dir.mkdir()
+    (about_dir / "index.html").write_text(_about_page(generated_at), encoding="utf-8")
     finding_stats = findings.write_artifacts(tmp)
     finding_dir = tmp / "findings" / findings.OBSERVER_DIVERGENCE_SLUG
     (finding_dir / "index.html").write_text(
@@ -1996,6 +2021,9 @@ def generate_report(
     _social_api.write(social, tmp, generated_at=generated_at)
     if public_url and SHARE_IMAGE.exists():
         shutil.copy(SHARE_IMAGE, tmp / "og-card.png")
+    shutil.copytree(_VENDORED_INSTRUMENTS / "fonts", tmp / "fonts")
+    shutil.copy(_VENDORED_INSTRUMENTS / "neutral-instruments.manifest.json",
+                tmp / "neutral-instruments.manifest.json")
 
     # Atomic-ish swap: rename the old tree aside, move the new one in, then
     # delete. A reader sees either the whole old report or the whole new one.

@@ -30,5 +30,7 @@ jobs:
           cache: pip
       - name: Install project and qualification dependencies
         run: python -m pip install -e ".[dev]"
+      - name: Verify pinned neutral-instruments snapshot
+        run: python scripts/verify-neutral-instruments.py
       - name: Run authoritative qualification
         run: ./scripts/qualify.sh

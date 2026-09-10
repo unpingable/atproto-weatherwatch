@@ -20,7 +20,7 @@ dev = ["pytest>=7.4"]
 weatherwatch = "weatherwatch.cli:main"
 
 [tool.setuptools.package-data]
-weatherwatch = ["_ops/*.toml"]
+weatherwatch = ["_ops/*.toml", "_instruments/*.css", "_instruments/*.json", "_instruments/fonts/*"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

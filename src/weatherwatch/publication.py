@@ -26,6 +26,18 @@ REQUIRED_ARTIFACTS = (
     f"{_FINDING_ROOT}/receipts/instances2.json",
 )
 
+# Authored accountability metadata is not observational material. It may occur
+# only as this exact reviewed fragment, at these exact paths and counts.
+OPERATOR_FRAGMENT = (b'<span class="nz-operator">Operated by The Neutral Ambassador '
+                     b'(<a href="https://bsky.app/profile/neutral.zone">@neutral.zone</a>). '
+                     b'<a href="https://github.com/unpingable/atproto-weatherwatch">Source on GitHub</a>.</span>')
+FAMILY_FRAGMENT = b'<span class="nz-family">neutral.zone / instruments</span>'
+AUTHORED_IDENTITY_FRAGMENTS = {
+    "index.html": (OPERATOR_FRAGMENT, FAMILY_FRAGMENT),
+    "about/index.html": (OPERATOR_FRAGMENT, FAMILY_FRAGMENT),
+    f"{_FINDING_ROOT}/index.html": (OPERATOR_FRAGMENT, FAMILY_FRAGMENT),
+}
+
 # Keep these byte patterns aligned with the former shell gate.  Labels are
 # returned instead of matching bytes so a refusal never repeats an identity.
 IDENTITY_PATTERNS = (
@@ -35,6 +47,7 @@ IDENTITY_PATTERNS = (
     ("bluesky_handle", re.compile(
         rb"[a-z0-9-]+\.bsky\.(?:social|app)", re.IGNORECASE)),
     ("actor_token", re.compile(rb"\ba:[0-9a-f]{12}\b", re.IGNORECASE)),
+    ("operator_identity", re.compile(rb"(?:@?neutral\.zone|bsky\.app/profile/neutral\.zone)", re.IGNORECASE)),
 )
 
 
@@ -83,12 +96,21 @@ def evaluate_candidate(report_dir: str | Path) -> dict:
                 continue
             data = path.read_bytes()
             result["files_scanned"] += 1
+            relative = path.relative_to(root).as_posix()
+            for fragment in AUTHORED_IDENTITY_FRAGMENTS.get(relative, ()):
+                count = data.count(fragment)
+                if count > 1:
+                    result["refusals"].append({
+                        "kind": "authored_identity_fragment_mismatch", "file": relative,
+                    })
+                elif count == 1:
+                    data = data.replace(fragment, b"[reviewed authored operator metadata]", 1)
             for kind, pattern in IDENTITY_PATTERNS:
                 if pattern.search(data):
                     result["refusals"].append({
                         "kind": "identity_shaped_value",
                         "shape": kind,
-                        "file": path.relative_to(root).as_posix(),
+                        "file": relative,
                     })
     except OSError as exc:
         result["disposition"] = "ERROR"
