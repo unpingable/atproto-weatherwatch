@@ -303,6 +303,19 @@ def test_only_exact_reviewed_authored_identity_fragments_are_exempt(tmp_path):
     assert evaluate_candidate(report_dir)["disposition"] == "REFUSED"
 
 
+def test_product_subdomains_are_not_operator_identity_tokens(tmp_path):
+    report_dir = tmp_path / "report"
+    _candidate(report_dir, generated=NOW, newest=NOW)
+    (report_dir / "index.html").write_text(
+        " ".join([
+            "https://weatherwatch.neutral.zone/",
+            "https://labelwatch.neutral.zone/",
+            "https://atproto-acl.neutral.zone/",
+        ])
+    )
+    assert evaluate_candidate(report_dir)["disposition"] == "PASSED"
+
+
 def test_incomplete_candidate_is_degraded_even_with_fresh_summary(tmp_path):
     report_dir = tmp_path / "report"
     _candidate(report_dir, generated=NOW, newest=NOW)

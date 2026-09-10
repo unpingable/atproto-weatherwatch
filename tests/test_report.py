@@ -66,7 +66,8 @@ def test_generates_from_synthetic_db(report_db, tmp_path):
 
 def test_generates_permanent_finding_and_machine_receipts(report_db, tmp_path):
     out = tmp_path / "beef"
-    stats = report.generate_report(report_db, out)
+    stats = report.generate_report(
+        report_db, out, public_url="https://weatherwatch.neutral.zone/")
     root = out / "findings"
     detail = root / findings.OBSERVER_DIVERGENCE_SLUG
 

@@ -47,7 +47,12 @@ IDENTITY_PATTERNS = (
     ("bluesky_handle", re.compile(
         rb"[a-z0-9-]+\.bsky\.(?:social|app)", re.IGNORECASE)),
     ("actor_token", re.compile(rb"\ba:[0-9a-f]{12}\b", re.IGNORECASE)),
-    ("operator_identity", re.compile(rb"(?:@?neutral\.zone|bsky\.app/profile/neutral\.zone)", re.IGNORECASE)),
+    # The operator handle is an identity token, not an arbitrary hostname
+    # substring.  In particular, authored canonical origins such as
+    # ``weatherwatch.neutral.zone`` must not be mistaken for the operator
+    # handle while bare/at-prefixed occurrences still trip the gate.
+    ("operator_identity", re.compile(
+        rb"(?<![a-z0-9.-])@?neutral\.zone(?![a-z0-9.-])", re.IGNORECASE)),
 )
 
 
