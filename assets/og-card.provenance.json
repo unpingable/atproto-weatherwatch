@@ -1,0 +1,19 @@
+{
+  "schema": "neutral-zone.social-card-provenance.v1",
+  "project": "weatherwatch",
+  "generated_at": "2026-09-10",
+  "generator": "OpenAI built-in image generation",
+  "artwork_sha256": "57684370e618a495d7b1f2402e8c84c9b2e4b88b8b98d1e0799a1c310df1c2e6",
+  "final_sha256": "2dc3a4e0d4da643c8ac686d6f4fdfbdae5c9f2054708ff9602a9c7a7d9776c59",
+  "prompt": "Create a sophisticated atmospheric field-map illustration for Weatherwatch, an ATProto platform weather instrument. Deep charcoal and dark slate, broad pressure bands, a restrained event front, sparse signal amber and acid-lime telemetry, right-weighted with the left 52% quiet for typography. Refined editorial data-art with no text, numbers, logos, UI panels, real geography, people, profiles, circuit boards, network-node spaghetti, or live values.",
+  "overlay": "assets/og-card.src.html",
+  "renderer": "Google Chrome 143.0.7499.109",
+  "render_command": "scripts/render-social-card.sh",
+  "width": 1200,
+  "height": 630,
+  "perceptual_review": {
+    "sizes": ["1200x630", "600x315", "360x189"],
+    "result": "pass",
+    "notes": "Project name, purpose and privacy line remain distinct; no live or identity-derived material."
+  }
+}

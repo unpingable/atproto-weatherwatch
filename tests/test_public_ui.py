@@ -107,6 +107,7 @@ def test_the_finding_leads_and_the_scope_denial_precedes_receipts(
     report.generate_report(plain_db, out)
     html = (out / "index.html").read_text()
     body = html[html.index("<body"):]
+    assert "ATProto Observatory" in body
     boundary = body.index("Counts the weather, <strong>keeps no people.</strong>")
     conditions = body.index("Current conditions")
     current = body.index("Network weather — now")
