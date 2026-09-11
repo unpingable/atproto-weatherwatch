@@ -576,11 +576,11 @@ HATCH_DEF = """
 #: context a reader gets, it is cached by whoever unfurls it, and it is seen by
 #: people who never open the page — so the denial has to be on the card, not
 #: just behind the link.
-SHARE_TITLE = "Jetstream observers disagree: 1.61× — Weather Watch"
+SHARE_TITLE = "Weatherwatch — ATProto platform weather"
 SHARE_DESCRIPTION = (
-    "A controlled concurrent probe found 1.61× different post volumes from "
-    "same-region public observers; self-control was 1.000×. Weather Watch "
-    "does not measure conflict, sentiment, users, or content."
+    "ATProto platform weather from aggregate event rates and observation health. "
+    "Counts the weather, keeps no people; it does not measure conflict, "
+    "sentiment, users, or content."
 )
 #: Static image, never regenerated with live figures: a share card outlives
 #: the numbers on it, and a cached card showing stale rates would mislead.
@@ -1511,7 +1511,7 @@ def _finding_page(public_url: str | None) -> str:
 {_finding_share_meta(public_url, finding)}
 <style>{STYLE}</style>
 </head><body><main class="paper">
-<div class="nz-masthead"><span class="nz-family">neutral.zone / instruments</span><span class="nz-product">Weatherwatch</span><nav><a href="../../about/">About</a><a href="#receipts">Methodology</a><a href="https://github.com/unpingable/atproto-weatherwatch">Source</a></nav></div>
+<div class="nz-masthead"><span class="nz-family">ATProto Observatory</span><span class="nz-product">Weatherwatch</span><nav><a href="../../about/">About</a><a href="#receipts">Methodology</a><a href="https://github.com/unpingable/atproto-weatherwatch">Source</a></nav></div>
 <nav class="paper-nav"><a href="../../">← Weather Watch</a></nav>
 <header>
   <div class="section-eyebrow"><span>Weather Watch finding</span><time>Aug 2026</time></div>
@@ -1594,7 +1594,7 @@ def _about_page(generated_at: str) -> str:
     return f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>About · Weatherwatch</title>
 <style>{STYLE}</style></head><body><main class="paper">
-<div class="nz-masthead"><span class="nz-family">neutral.zone / instruments</span><span class="nz-product">Weatherwatch</span><nav><a href="/">Current weather</a><a href="/#receipts">Methodology</a><a href="https://github.com/unpingable/atproto-weatherwatch">Source</a></nav></div>
+<div class="nz-masthead"><span class="nz-family">ATProto Observatory</span><span class="nz-product">Weatherwatch</span><nav><a href="/">Current weather</a><a href="/#receipts">Methodology</a><a href="https://github.com/unpingable/atproto-weatherwatch">Source</a></nav></div>
 <header><p class="nz-eyebrow">About this instrument</p><h1>Weather for ATProto.</h1><p class="paper-lead">Weatherwatch turns aggregate event rates from a named public Jetstream observer into a readable platform-weather report.</p></header>
 <section class="paper-section"><h2>Why it exists</h2><p>ATProto activity is easier to understand as changing conditions than as a wall of counters. The public reading comes first; every source window and derivation remains available beneath it.</p>
 <h2>What it looks at</h2><p>Aggregate create, update, and delete events delivered by the observer named on the report. It retains counts and observation-health records, not raw events.</p>
@@ -1661,7 +1661,7 @@ def _build_html(conn, run_ids, runs, latest, series_map, totals_series,
 <style>{STYLE}</style>
 </head><body><div class="wrap">
 
-<div class="nz-masthead"><span class="nz-family">neutral.zone / instruments</span><span class="nz-product">Weatherwatch</span><nav><a href="/about/">About</a><a href="/#receipts">Methodology</a><a href="https://github.com/unpingable/atproto-weatherwatch">Source</a></nav></div>
+<div class="nz-masthead"><span class="nz-family">ATProto Observatory</span><span class="nz-product">Weatherwatch</span><nav><a href="/about/">About</a><a href="/#receipts">Methodology</a><a href="https://github.com/unpingable/atproto-weatherwatch">Source</a></nav></div>
 
 <header class="mast observatory">
   <p class="brand-kicker">Weather Watch</p>

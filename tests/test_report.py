@@ -1275,6 +1275,23 @@ def test_share_card_is_static_and_carries_no_live_figures(report_db, tmp_path):
     shipped = (out / "og-card.png").read_bytes()
     assert shipped == report.SHARE_IMAGE.read_bytes()
     assert "{" not in report.SHARE_DESCRIPTION, "no interpolated live values"
+    assert report.SHARE_TITLE == "Weatherwatch — ATProto platform weather"
+    assert "1.61" not in report.SHARE_TITLE + report.SHARE_DESCRIPTION
+
+
+def test_share_card_dimensions_and_provenance():
+    import hashlib
+    import json
+    import struct
+
+    card = report.SHARE_IMAGE.read_bytes()
+    assert card.startswith(b"\x89PNG\r\n\x1a\n")
+    assert struct.unpack(">II", card[16:24]) == (1200, 630)
+    provenance = json.loads((report.SHARE_IMAGE.parent / "og-card.provenance.json").read_text())
+    assert provenance["final_sha256"] == hashlib.sha256(card).hexdigest()
+    artwork = (report.SHARE_IMAGE.parent / "og-card-artwork.png").read_bytes()
+    assert provenance["artwork_sha256"] == hashlib.sha256(artwork).hexdigest()
+    assert provenance["perceptual_review"]["result"] == "pass"
 
 
 def test_share_metadata_does_not_weaken_the_dark_posture(report_db, tmp_path):

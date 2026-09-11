@@ -1,34 +1,6 @@
-<!doctype html><meta charset="utf-8">
-<!-- Source for assets/og-card.png. Static by design: a share card is cached
-     by whoever unfurls it, so it must never carry live numbers that go stale
-     and mislead. Regenerate with:
-       google-chrome --headless=new --window-size=1200,630 \
-         --screenshot=assets/og-card.png file://$PWD/assets/og-card.src.html -->
+<!doctype html>
+<html lang="en"><meta charset="utf-8"><title>Weatherwatch social card source</title>
 <style>
-  html,body{margin:0;padding:0}
-  body{width:1200px;height:630px;background:#0e1014;color:#e6e8ee;
-       font:400 26px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
-       display:flex;flex-direction:column;justify-content:center;
-       padding:0 84px;box-sizing:border-box}
-  h1{font-size:62px;margin:0;letter-spacing:.01em;font-weight:600}
-  .sub{color:#7fb2e5;font-size:30px;margin-top:10px;letter-spacing:.06em}
-  .rule{height:3px;width:132px;background:#7fb2e5;margin-top:32px;opacity:.85}
-  .what{margin-top:34px;font-size:29px;line-height:1.45}
-  .not{margin-top:24px;color:#8a90a0;font-size:27px}
-  .not b{color:#e0b45a;font-weight:600}
-  .foot{margin-top:40px;color:#8a90a0;font-size:22px;
-        display:flex;align-items:center;gap:22px}
-  .foot svg{opacity:.55;flex:none}
-</style>
-<h1>weatherwatch</h1>
-<div class="sub">PLATFORM WEATHER</div>
-<div class="rule"></div>
-<div class="what">Aggregate ATProto event rates &mdash; posts, likes, follows,<br>
-blocks, deletes &mdash; and the health of the observation itself.</div>
-<div class="not"><b>Not</b> conflict. <b>Not</b> sentiment. <b>Not</b> users. <b>Not</b> content.</div>
-<div class="foot">counts the weather &middot; keeps no people
-  <svg width="260" height="34" viewBox="0 0 260 34">
-    <polyline fill="none" stroke="#7fb2e5" stroke-width="2.2" stroke-linejoin="round"
-      points="0,26 10,20 20,24 30,11 40,19 50,16 60,23 70,7 80,18 90,15 100,22 110,10 120,20 130,16 140,23 150,5 160,18 170,13 180,21 190,11 200,19 210,15 220,23 230,9 240,17 250,14 260,20"/>
-  </svg>
-</div>
+@font-face{font-family:Plex;src:url("../src/weatherwatch/_instruments/fonts/IBMPlexSans-SemiBold.woff2")}@font-face{font-family:Serif;src:url("../src/weatherwatch/_instruments/fonts/SourceSerif4-Bold.woff2")}@font-face{font-family:Mono;src:url("../src/weatherwatch/_instruments/fonts/IBMPlexMono-Regular.woff2")}
+*{box-sizing:border-box}html,body{margin:0;width:1200px;height:630px;overflow:hidden}body{background:#171b1d url("og-card-artwork.png") center/cover no-repeat;color:#f5f0e6}.shade{position:absolute;inset:0;background:linear-gradient(90deg,rgba(16,19,20,.98) 0%,rgba(16,19,20,.91) 42%,rgba(16,19,20,.18) 70%,rgba(16,19,20,.04) 100%)}.frame{position:absolute;inset:0;padding:58px 66px 48px;display:flex;flex-direction:column}.eyebrow{font:600 18px/1 Plex,sans-serif;letter-spacing:.17em;text-transform:uppercase;color:#d6a64c}h1{font:700 88px/.94 Serif,serif;letter-spacing:-.035em;margin:58px 0 12px;max-width:600px}.sub{font:600 27px/1.2 Plex,sans-serif;color:#eee7da}.tag{font:400 23px/1.3 Plex,sans-serif;color:#dfe8dc;margin-top:30px;max-width:520px}.tag strong{color:#c7dc55;font-weight:600}.custody{margin-top:auto;border-top:1px solid rgba(238,231,218,.34);padding-top:15px;display:flex;justify-content:space-between;align-items:center;font:400 16px/1 Mono,monospace;color:#b9b4aa;letter-spacing:.04em}
+</style><body><div class="shade"></div><main class="frame"><div class="eyebrow">ATProto Observatory</div><h1>weatherwatch</h1><div class="sub">ATProto platform weather</div><div class="tag">Counts the weather. <strong>Keeps no people.</strong></div><div class="custody"><span>neutral.zone</span><span>weatherwatch.neutral.zone</span></div></main></body></html>

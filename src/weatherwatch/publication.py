@@ -31,7 +31,7 @@ REQUIRED_ARTIFACTS = (
 OPERATOR_FRAGMENT = (b'<span class="nz-operator">Operated by The Neutral Ambassador '
                      b'(<a href="https://bsky.app/profile/neutral.zone">@neutral.zone</a>). '
                      b'<a href="https://github.com/unpingable/atproto-weatherwatch">Source on GitHub</a>.</span>')
-FAMILY_FRAGMENT = b'<span class="nz-family">neutral.zone / instruments</span>'
+FAMILY_FRAGMENT = b'<span class="nz-family">ATProto Observatory</span>'
 AUTHORED_IDENTITY_FRAGMENTS = {
     "index.html": (OPERATOR_FRAGMENT, FAMILY_FRAGMENT),
     "about/index.html": (OPERATOR_FRAGMENT, FAMILY_FRAGMENT),
