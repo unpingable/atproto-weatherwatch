@@ -1267,6 +1267,21 @@ def test_share_card_image_ships_and_is_absolute(report_db, tmp_path):
     assert f'content="{PUBLIC}/"' in html_doc, "og:url should be canonical"
 
 
+def test_share_card_can_be_bound_to_deployed_artifact(report_db, tmp_path, monkeypatch):
+    deployed = tmp_path / "release-card.png"
+    deployed.write_bytes(report.SHARE_IMAGE.read_bytes())
+    monkeypatch.setenv("WW_SHARE_IMAGE", str(deployed))
+    out = tmp_path / "beef"
+    report.generate_report(report_db, out, public_url=PUBLIC)
+    assert (out / "og-card.png").read_bytes() == deployed.read_bytes()
+
+
+def test_public_report_refuses_missing_deployed_card(report_db, tmp_path, monkeypatch):
+    monkeypatch.setenv("WW_SHARE_IMAGE", str(tmp_path / "missing-card.png"))
+    with pytest.raises(RuntimeError, match="requires the configured authored share image"):
+        report.generate_report(report_db, tmp_path / "beef", public_url=PUBLIC)
+
+
 def test_share_card_is_static_and_carries_no_live_figures(report_db, tmp_path):
     """A card outlives the numbers on it; a cached card showing stale rates
     would mislead. The image is a fixed asset, not a render of current data."""

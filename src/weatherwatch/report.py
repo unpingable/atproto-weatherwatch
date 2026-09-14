@@ -587,6 +587,18 @@ SHARE_DESCRIPTION = (
 SHARE_IMAGE = Path(__file__).resolve().parents[2] / "assets" / "og-card.png"
 
 
+def _share_image() -> Path:
+    """Resolve the authored card from an explicit deployed-artifact path.
+
+    ``SHARE_IMAGE`` remains the source-checkout default.  An installed wheel
+    no longer happens to sit two directories below the repository assets, so
+    immutable deployments must bind the image carried by that same release
+    with ``WW_SHARE_IMAGE``.
+    """
+    configured = os.environ.get("WW_SHARE_IMAGE")
+    return Path(configured) if configured else SHARE_IMAGE
+
+
 def _esc(s) -> str:
     return html.escape(str(s), quote=True)
 
@@ -2019,8 +2031,13 @@ def generate_report(
     # Static read side, beside the one that already exists. `build()` asserts
     # identity-freedom once more before these bytes are written.
     _social_api.write(social, tmp, generated_at=generated_at)
-    if public_url and SHARE_IMAGE.exists():
-        shutil.copy(SHARE_IMAGE, tmp / "og-card.png")
+    share_image = _share_image()
+    if public_url:
+        if not share_image.is_file():
+            raise RuntimeError(
+                "public report requires the configured authored share image"
+            )
+        shutil.copy(share_image, tmp / "og-card.png")
     shutil.copytree(_VENDORED_INSTRUMENTS / "fonts", tmp / "fonts")
     shutil.copy(_VENDORED_INSTRUMENTS / "neutral-instruments.manifest.json",
                 tmp / "neutral-instruments.manifest.json")
