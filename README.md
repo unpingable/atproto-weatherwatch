@@ -251,6 +251,8 @@ collector tests against an in-process fake Jetstream.
 
 ## Deeper documentation
 
+- What it keeps, what it may lose, and what it claims after a loss:
+  [`DATA-CONTRACT.md`](DATA-CONTRACT.md)
 - What the public site publishes, and what a consumer may rely on:
   [`docs/PUBLIC-ARTIFACTS.md`](docs/PUBLIC-ARTIFACTS.md)
 - Measured Jetstream protocol behaviour the design rests on:

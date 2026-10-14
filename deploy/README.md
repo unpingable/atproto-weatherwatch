@@ -158,7 +158,7 @@ published index cannot be read (including the very first publication). After a
 store loss, `--declare-new-epoch` (or `WW_DECLARE_NEW_EPOCH=1`) publishes the
 shorter history anyway with a discontinuity notice on the page, in
 `summary.json` and in `history/index.json`; later publishes carry the notice
-forward.
+forward. See [`../DATA-CONTRACT.md`](../DATA-CONTRACT.md).
 
 The privacy gate refuses DID methods, AT URIs, CID-shaped values, Bluesky
 handles, and salted actor-token shapes anywhere in the rendered directory.
