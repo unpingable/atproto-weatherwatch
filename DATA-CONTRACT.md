@@ -64,16 +64,29 @@ fresh lineage and is reported UNKNOWN.
 ## Publication continuity
 
 The published site is stored apart from the observation store, so its
-`history/index.json` is the record of what was published. Before each swap,
-`deploy/publish.sh` runs `weatherwatch publish-continuity`, which compares the
-candidate's archived days with the published ones. It refuses a candidate whose
-history starts later, has fewer days, or drops a published day. It also
-refuses when the published index cannot be read; that case is treated as
-unknown, never as clean. An operator can publish anyway with
-`--declare-new-epoch`. The page, `summary.json` and `history/index.json` then
-carry a discontinuity notice ("history before X was lost", or "unknown" when
-the earlier index could not be read), and later publishes carry the notice
-forward.
+`history/index.json` and `summary.json` are the record of what was published:
+the index lists the archived days, and the summary holds the data interval,
+the store identity and the most recent ~24 hours of windows. Before each swap,
+`deploy/publish.sh` fetches both from the live site and runs
+`weatherwatch publish-continuity`, which refuses a candidate when:
+
+- its archived history starts later, has fewer days, or drops a published day;
+- its data interval starts later than the published one;
+- it covers less observed time than the published summary's recent windows,
+  over the span those windows cover, by more than 120 seconds or 1% of it,
+  whichever is larger. Windows that have aged out of the candidate's summary
+  are read from its archived day files, so time passing is never counted as
+  loss;
+- its store identity differs from the published `store_id`;
+- the published index or summary cannot be read. That case is treated as
+  unknown, never as clean.
+
+An operator can publish anyway with `--declare-new-epoch`. The page,
+`summary.json` and `history/index.json` then carry a discontinuity notice
+("history before X was lost", "observations before X in the last 24 hours were
+lost", "comes from a different observation store", or "unknown" when the
+published index or summary could not be read), and later publishes carry the
+notice forward.
 
 ## State whose loss matters
 
@@ -105,10 +118,11 @@ forward.
 
 - In a replayed run only the first window is marked; later replayed windows
   are distinguishable only by the run's replay flag and by measured lag.
-- The publish guard compares archived days, not the most recent 24 hours
-  (which live only in `summary.json`) and not the window counts inside a day.
-- The very first publication has no published index to compare against, so it
-  needs `--declare-new-epoch`.
+- The publish guard compares the published recent windows by observed time
+  and archived days by presence; it does not compare window counts inside an
+  archived day.
+- The very first publication has no published index or summary to compare
+  against, so it needs `--declare-new-epoch`.
 - A store that predates store identity gets one the next time Weatherwatch
   initialises it (for example when the collector starts). It is marked `assigned_to_existing_store`, and its history is taken
   to begin at its first recorded run.

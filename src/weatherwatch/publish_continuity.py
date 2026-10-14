@@ -7,14 +7,25 @@ lives off the collector host, which makes its `history/index.json` the durable
 record of what was published before; this module compares a new build against
 it before `deploy/publish.sh` swaps anything.
 
-    CONTINUOUS  every published day is still present and the history does not
-                start later              -> publish
-    SHRUNK      the new history starts later, has fewer days, or drops a
-                published day            -> refuse
-    UNKNOWN     the published index cannot be read or parsed
-                                          -> refuse; never assumed clean
+The archive holds whole UTC days; the most recent ~24 hours live only in
+`summary.json`. The live summary is therefore compared too: its data interval,
+its store identity, and the observed time in its recent windows, which the
+candidate must still cover (from its own recent windows or, once they have
+aged out, from its archived day files).
 
-An operator may publish a SHRUNK or UNKNOWN build only by declaring a new
+    CONTINUOUS    every published day is still present, the history does not
+                  start later, the published recent windows are still
+                  covered, and the store is the same    -> publish
+    SHRUNK        the new history starts later, has fewer days, drops a
+                  published day, or covers less of the published recent
+                  window                                -> refuse
+    DISCONTINUOUS nothing visible was lost, but the build comes from a
+                  different observation store            -> refuse
+    UNKNOWN       the published index or summary cannot be read or parsed
+                                                        -> refuse; never
+                                                           assumed clean
+
+An operator may publish a SHRUNK, DISCONTINUOUS or UNKNOWN build only by declaring a new
 epoch. The build then carries an explicit discontinuity notice in
 `history/index.json`, `summary.json` and the page itself. Notices already on
 the published site are carried forward, so later publishes keep saying so.
@@ -35,7 +46,15 @@ NOTICE_SCHEMA = "weatherwatch.history-discontinuity/v1"
 
 CONTINUOUS = "CONTINUOUS"
 SHRUNK = "SHRUNK"
+DISCONTINUOUS = "DISCONTINUOUS"
 UNKNOWN = "UNKNOWN"
+
+# Observed time the candidate may lack, inside the published recent window,
+# before it counts as a loss: whichever is larger. A partial window committed
+# at shutdown is recounted, never shortened, so ordinary publishes lose
+# nothing; this only absorbs rounding.
+RECENT_TOLERANCE_SECONDS = 120
+RECENT_TOLERANCE_FRACTION = 0.01
 
 _BANNER_START = "<!--ww-discontinuity-->"
 _BANNER_END = "<!--/ww-discontinuity-->"
@@ -74,6 +93,135 @@ def extent(index: dict) -> dict:
     }
 
 
+def _iso(ts) -> str:
+    return dt.datetime.fromtimestamp(ts, dt.timezone.utc) \
+        .isoformat().replace("+00:00", "Z")
+
+
+def read_summary(path: str | Path | None) -> tuple[dict | None, str | None]:
+    """Return (summary, None) or (None, reason), like `read_index`."""
+    if path is None:
+        return None, "no published summary supplied"
+    try:
+        document = json.loads(Path(path).read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return None, "published summary not found"
+    except (OSError, ValueError) as exc:
+        return None, f"published summary unreadable ({type(exc).__name__})"
+    interval = document.get("interval") if isinstance(document, dict) else None
+    windows = document.get("windows") if isinstance(document, dict) else None
+    if (not isinstance(interval, dict)
+            or not isinstance(windows, list)
+            or not all(isinstance(w, dict)
+                       and isinstance(w.get("bucket_start"), (int, float))
+                       for w in windows)):
+        return None, "published summary is not a weatherwatch summary"
+    return document, None
+
+
+def _store_id(summary: dict):
+    store = summary.get("store")
+    return store.get("store_id") if isinstance(store, dict) else None
+
+
+def _observed_s(windows) -> float:
+    return sum((w.get("observed_duration_us") or 0) for w in windows) / 1e6
+
+
+def _candidate_windows(build: Path, summary: dict, lo, hi) -> list:
+    """Candidate windows with bucket_start in [lo, hi]: its recent windows,
+    plus its archived days for windows that have aged out of `summary.json`
+    since the live site was published."""
+    windows = [w for w in summary.get("windows", [])
+               if isinstance(w, dict) and lo <= w.get("bucket_start", -1) <= hi]
+    recent_lo = min((w["bucket_start"] for w in summary.get("windows", [])
+                     if isinstance(w, dict)
+                     and isinstance(w.get("bucket_start"), (int, float))),
+                    default=None)
+    if recent_lo is not None and recent_lo <= lo:
+        return windows
+    day = dt.datetime.fromtimestamp(lo, dt.timezone.utc).date()
+    last = dt.datetime.fromtimestamp(hi, dt.timezone.utc).date()
+    while day <= last:
+        path = build / archive.ARCHIVE_DIR / f"{day.isoformat()}.json"
+        try:
+            document = json.loads(path.read_text(encoding="utf-8"))
+            archived = document.get("windows", [])
+        except (OSError, ValueError, AttributeError):
+            archived = []
+        windows += [w for w in archived if isinstance(w, dict)
+                    and lo <= w.get("bucket_start", -1) <= hi
+                    and (recent_lo is None or w["bucket_start"] < recent_lo)]
+        day += dt.timedelta(days=1)
+    return windows
+
+
+def compare_recent(build: Path, candidate: dict, published: dict) -> dict:
+    """Compare the published summary's interval, store and recent windows
+    with the candidate's. Returns {"reasons", "loss", "store_changed", ...};
+    `loss` reasons mean SHRUNK, a store change alone means DISCONTINUOUS."""
+    out: dict = {"loss": [], "store_changed": None, "recent": None,
+                 "recent_lost": False, "start_later": False}
+    pub_first = (published.get("interval") or {}).get("first_bucket_start")
+    new_first = (candidate.get("interval") or {}).get("first_bucket_start")
+    if isinstance(pub_first, (int, float)) and (
+            not isinstance(new_first, (int, float)) or new_first > pub_first):
+        out["start_later"] = True
+        out["loss"].append(
+            "data interval would start later ("
+            f"{_iso(new_first) if isinstance(new_first, (int, float)) else 'no data'}"
+            f" instead of {_iso(pub_first)})")
+
+    pub_windows = published.get("windows", [])
+    if pub_windows:
+        lo = min(w["bucket_start"] for w in pub_windows)
+        hi = max(w["bucket_start"] for w in pub_windows)
+        live_s = _observed_s(pub_windows)
+        cand = _candidate_windows(build, candidate, lo, hi)
+        cand_s = _observed_s(cand)
+        allowed = max(RECENT_TOLERANCE_SECONDS,
+                      RECENT_TOLERANCE_FRACTION * live_s)
+        observed_from = min((w["bucket_start"] for w in cand
+                             if (w.get("observed_duration_us") or 0) > 0),
+                            default=None)
+        out["recent"] = {
+            "published_from": _iso(lo), "published_to": _iso(hi),
+            "published_observed_seconds": round(live_s, 3),
+            "candidate_observed_seconds": round(cand_s, 3),
+            "candidate_observed_from": (_iso(observed_from)
+                                        if observed_from is not None else None),
+        }
+        out["recent_lost"] = live_s - cand_s > allowed
+        if out["recent_lost"]:
+            out["loss"].append(
+                f"recent window ({_iso(lo)} to {_iso(hi)}) would cover "
+                f"{live_s - cand_s:.0f} s less observed time "
+                f"({cand_s:.0f} s instead of {live_s:.0f} s)")
+
+    pub_store, new_store = _store_id(published), _store_id(candidate)
+    if pub_store is not None and new_store != pub_store:
+        out["store_changed"] = {"published": pub_store, "candidate": new_store}
+    return out
+
+
+def _recent_message(recent: dict | None) -> str:
+    """The notice's sentence about the last 24 hours. `recent` is the
+    `compare_recent` result, or None when the live summary was unreadable."""
+    if recent is None:
+        return (" Whether observations in the last 24 hours were lost is "
+                "unknown.")
+    window = recent.get("recent")
+    if not window or not recent.get("recent_lost"):
+        return ""
+    since = window["candidate_observed_from"]
+    span = f"{window['published_from']} to {window['published_to']}"
+    if since is None:
+        return (f" All observations published for the last 24 hours ({span}) "
+                "were lost.")
+    return (f" Observations before {since} in the last 24 hours were lost "
+            f"(published window {span}).")
+
+
 def _new_history_begins(build: Path, new_extent: dict) -> str:
     try:
         summary = json.loads((build / "summary.json").read_text("utf-8"))
@@ -86,10 +234,12 @@ def _new_history_begins(build: Path, new_extent: dict) -> str:
     return new_extent["first_archived_day"] or "unknown"
 
 
-def evaluate(build_dir: str | Path, published_index: str | Path | None, *,
+def evaluate(build_dir: str | Path, published_index: str | Path | None,
+             published_summary: str | Path | None = None, *,
              declare_new_epoch: bool = False,
              now: str | None = None) -> dict:
-    """Compare the build's history extent against the published one.
+    """Compare the build's history extent, data interval, recent windows and
+    store identity against the published ones.
 
     Pure apart from reading files: it decides, `apply` writes.
     """
@@ -103,6 +253,8 @@ def evaluate(build_dir: str | Path, published_index: str | Path | None, *,
         "reasons": [],
         "published": None,
         "candidate": None,
+        "recent": None,
+        "store_changed": None,
         "notices": [],
     }
     new_index, err = read_index(build / archive.ARCHIVE_DIR / archive.INDEX_NAME)
@@ -110,13 +262,22 @@ def evaluate(build_dir: str | Path, published_index: str | Path | None, *,
         result["reasons"].append(f"candidate history index: {err}")
         result["reason"] = "candidate has no readable history index"
         return result
+    new_summary, err = read_summary(build / "summary.json")
+    if new_summary is None:
+        result["reasons"].append(f"candidate summary: {err}")
+        result["reason"] = "candidate has no readable summary"
+        return result
     new_extent = extent(new_index)
     result["candidate"] = new_extent
 
     published, err = read_index(published_index)
     carried: list = []
+    unknown = False
+    lost: list = []
+    history_lost = False
     if published is None:
         result["reasons"].append(err)
+        unknown = True
     else:
         pub_extent = extent(published)
         result["published"] = pub_extent
@@ -139,7 +300,35 @@ def evaluate(build_dir: str | Path, published_index: str | Path | None, *,
             result["reasons"].append(
                 f"{len(missing)} published day(s) would disappear")
         result["missing_days"] = missing
-        result["continuity"] = SHRUNK if result["reasons"] else CONTINUOUS
+        lost += list(result["reasons"])
+        history_lost = bool(lost)
+
+    live_summary, err = read_summary(published_summary)
+    recent = None
+    if live_summary is None:
+        result["reasons"].append(err)
+        unknown = True
+    else:
+        recent = compare_recent(build, new_summary, live_summary)
+        result["recent"] = recent["recent"]
+        result["store_changed"] = recent["store_changed"]
+        result["reasons"] += recent["loss"]
+        lost += recent["loss"]
+        history_lost = history_lost or recent["start_later"]
+        if recent["store_changed"]:
+            change = recent["store_changed"]
+            result["reasons"].append(
+                f"observation store changed ({change['published']} -> "
+                f"{change['candidate'] or 'no identity'})")
+
+    if unknown:
+        result["continuity"] = UNKNOWN
+    elif lost:
+        result["continuity"] = SHRUNK
+    elif result["store_changed"]:
+        result["continuity"] = DISCONTINUOUS
+    else:
+        result["continuity"] = CONTINUOUS
 
     result["notices"] = carried
     if result["continuity"] == CONTINUOUS:
@@ -147,16 +336,23 @@ def evaluate(build_dir: str | Path, published_index: str | Path | None, *,
         result["reason"] = "published history is preserved"
         return result
     if not declare_new_epoch:
-        result["reason"] = (
-            "refusing to shrink the published history"
-            if result["continuity"] == SHRUNK else
-            "continuity with the published history is unknown; refusing")
+        result["reason"] = {
+            SHRUNK: "refusing to shrink the published history",
+            DISCONTINUOUS: "refusing to replace the published history with "
+                           "one from a different observation store",
+        }.get(result["continuity"],
+              "continuity with the published history is unknown; refusing")
         return result
 
     begins = _new_history_begins(build, new_extent)
     declared = now or _iso_now()
-    if result["continuity"] == SHRUNK:
-        pub = result["published"]
+    pub = result["published"]
+    if published is None:
+        message = (
+            f"History discontinuity declared {declared}. The previously "
+            f"published history could not be read, so whether history "
+            f"before {begins} was lost is unknown.")
+    elif history_lost:
         message = (
             f"History discontinuity declared {declared}. History before "
             f"{begins} was lost: the previously published history "
@@ -165,14 +361,21 @@ def evaluate(build_dir: str | Path, published_index: str | Path | None, *,
     else:
         message = (
             f"History discontinuity declared {declared}. The previously "
-            f"published history could not be read, so whether history "
-            f"before {begins} was lost is unknown.")
+            f"published archive ({pub['first_archived_day']} to "
+            f"{pub['last_archived_day']}) is preserved.")
+    message += _recent_message(recent)
+    if result["store_changed"]:
+        message += (" This history comes from a different observation store "
+                    "than the one previously published, and does not "
+                    "continue it.")
     result["notices"] = carried + [{
         "schema": NOTICE_SCHEMA,
         "declared_at": declared,
         "continuity": result["continuity"],
         "history_begins": begins,
         "previous_published": result["published"],
+        "recent_window": result["recent"],
+        "store_changed": result["store_changed"],
         "reasons": list(result["reasons"]),
         "message": message,
     }]
@@ -223,9 +426,10 @@ def apply(build_dir: str | Path, notices: list) -> None:
 
 
 def check_and_apply(build_dir: str | Path, published_index: str | Path | None,
+                    published_summary: str | Path | None = None,
                     *, declare_new_epoch: bool = False,
                     now: str | None = None) -> dict:
-    result = evaluate(build_dir, published_index,
+    result = evaluate(build_dir, published_index, published_summary,
                       declare_new_epoch=declare_new_epoch, now=now)
     if result["disposition"] != "REFUSED":
         apply(build_dir, result["notices"])

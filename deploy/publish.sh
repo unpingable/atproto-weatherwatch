@@ -17,9 +17,11 @@
 #
 # Continuity guard: before the swap, the candidate's history extent is compared
 # with the live site's history/index.json, which is the durable record of what
-# was published. A candidate whose history starts later, has fewer days, or
-# drops a published day is refused, and so is any candidate when the live index
-# cannot be read. --declare-new-epoch (or WW_DECLARE_NEW_EPOCH=1) publishes it
+# was published, and its summary with the live summary.json, which holds the
+# most recent ~24 hours. A candidate whose history starts later, has fewer days,
+# drops a published day, covers less of the published recent window, or comes
+# from a different observation store is refused, and so is any candidate when
+# the live index or summary cannot be read. --declare-new-epoch (or WW_DECLARE_NEW_EPOCH=1) publishes it
 # anyway with an explicit discontinuity notice on the page and in the JSON.
 #
 # Two modes, one privacy gate and one atomic-swap discipline:
@@ -109,21 +111,25 @@ fi
 [ -f "$BUILD/index.html" ] || { echo "!! no $BUILD/index.html" >&2; exit 1; }
 
 echo "==> Continuity guard"
-# The live index is fetched to a local file; a failed fetch leaves no file,
-# which the guard reads as "continuity unknown", never as "clean".
+# The live index and summary are fetched to local files; a failed fetch leaves
+# no file, which the guard reads as "continuity unknown", never as "clean".
 PUBLISHED_INDEX="$(mktemp)"
-trap 'rm -f "$PUBLISHED_INDEX"' EXIT
-if [ "$MODE" = "local" ]; then
-  cp "$TARGET/history/index.json" "$PUBLISHED_INDEX" 2>/dev/null \
-    || rm -f "$PUBLISHED_INDEX"
-else
-  "${SSH[@]}" "cat '$REMOTE/history/index.json'" > "$PUBLISHED_INDEX" \
-    || rm -f "$PUBLISHED_INDEX"
-fi
+PUBLISHED_SUMMARY="$(mktemp)"
+trap 'rm -f "$PUBLISHED_INDEX" "$PUBLISHED_SUMMARY"' EXIT
+fetch_live() {  # fetch_live <path under the live root> <local file>
+  if [ "$MODE" = "local" ]; then
+    cp "$TARGET/$1" "$2" 2>/dev/null || rm -f "$2"
+  else
+    "${SSH[@]}" "cat '$REMOTE/$1'" > "$2" || rm -f "$2"
+  fi
+}
+fetch_live history/index.json "$PUBLISHED_INDEX"
+fetch_live summary.json "$PUBLISHED_SUMMARY"
 EPOCH_ARGS=()
 if [ "$DECLARE_NEW_EPOCH" = "1" ]; then EPOCH_ARGS=(--declare-new-epoch); fi
 "${RENDER[@]}" publish-continuity --report-dir "$BUILD" \
-    --published-index "$PUBLISHED_INDEX" ${EPOCH_ARGS[@]+"${EPOCH_ARGS[@]}"}
+    --published-index "$PUBLISHED_INDEX" \
+    --published-summary "$PUBLISHED_SUMMARY" ${EPOCH_ARGS[@]+"${EPOCH_ARGS[@]}"}
 
 echo "==> Privacy gate"
 # The supported CLI owns the same deterministic gate used by `status`.  It

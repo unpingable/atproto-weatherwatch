@@ -10,6 +10,7 @@
     weatherwatch status [--json] [--report-dir DIR]
     weatherwatch publication-gate --report-dir DIR [--json]
     weatherwatch publish-continuity --report-dir DIR --published-index FILE
+        --published-summary FILE [--declare-new-epoch]
     weatherwatch compose --input reduced-facts.json --rule RULE_ID
     weatherwatch compose --list-rules
     weatherwatch plc-reduce --input sequenced-export.jsonl --acquired-at TIME
@@ -341,7 +342,7 @@ def _cmd_publication_gate(args) -> int:
 def _cmd_publish_continuity(args) -> int:
     from . import publish_continuity
     result = publish_continuity.check_and_apply(
-        args.report_dir, args.published_index,
+        args.report_dir, args.published_index, args.published_summary,
         declare_new_epoch=args.declare_new_epoch)
     if args.json:
         print(json.dumps(result, indent=2, sort_keys=True))
@@ -532,6 +533,10 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--published-index", default=None,
                    help="copy of the live site's history/index.json; absent or "
                         "unreadable means continuity is unknown")
+    p.add_argument("--published-summary", default=None,
+                   help="copy of the live site's summary.json (the recent "
+                        "~24 hours); absent or unreadable means continuity "
+                        "is unknown")
     p.add_argument("--declare-new-epoch", action="store_true",
                    help="publish a shorter or unverifiable history as a new "
                         "epoch, with an explicit discontinuity notice")
