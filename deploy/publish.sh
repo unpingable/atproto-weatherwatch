@@ -13,6 +13,14 @@
 #   ./deploy/publish.sh                       # regenerate + publish (remote)
 #   ./deploy/publish.sh --skip-generate       # publish what is already built
 #   WW_MODE=local ./deploy/publish.sh         # publish on the serving host itself
+#   ./deploy/publish.sh --declare-new-epoch   # publish a shorter history on purpose
+#
+# Continuity guard: before the swap, the candidate's history extent is compared
+# with the live site's history/index.json, which is the durable record of what
+# was published. A candidate whose history starts later, has fewer days, or
+# drops a published day is refused, and so is any candidate when the live index
+# cannot be read. --declare-new-epoch (or WW_DECLARE_NEW_EPOCH=1) publishes it
+# anyway with an explicit discontinuity notice on the page and in the JSON.
 #
 # Two modes, one privacy gate and one atomic-swap discipline:
 #   remote  push rendered output from a workstation over ssh (original path)
@@ -81,7 +89,17 @@ if [ "$MODE" = "remote" ]; then
   SSH=(ssh -i "$SSH_KEY" -o BatchMode=yes -o ConnectTimeout=10 "$SSH_HOST")
 fi
 
-if [ "${1:-}" != "--skip-generate" ]; then
+SKIP_GENERATE=0
+DECLARE_NEW_EPOCH="${WW_DECLARE_NEW_EPOCH:-0}"
+for arg in "$@"; do
+  case "$arg" in
+    --skip-generate) SKIP_GENERATE=1 ;;
+    --declare-new-epoch) DECLARE_NEW_EPOCH=1 ;;
+    *) echo "!! unknown argument: $arg" >&2; exit 1 ;;
+  esac
+done
+
+if [ "$SKIP_GENERATE" != "1" ]; then
   echo "==> Rendering from $DB"
   "${RENDER[@]}" --db "$DB" report --output "$BUILD" \
       ${SOCIAL_DB:+--social-db "$SOCIAL_DB"} \
@@ -89,6 +107,23 @@ if [ "${1:-}" != "--skip-generate" ]; then
 fi
 
 [ -f "$BUILD/index.html" ] || { echo "!! no $BUILD/index.html" >&2; exit 1; }
+
+echo "==> Continuity guard"
+# The live index is fetched to a local file; a failed fetch leaves no file,
+# which the guard reads as "continuity unknown", never as "clean".
+PUBLISHED_INDEX="$(mktemp)"
+trap 'rm -f "$PUBLISHED_INDEX"' EXIT
+if [ "$MODE" = "local" ]; then
+  cp "$TARGET/history/index.json" "$PUBLISHED_INDEX" 2>/dev/null \
+    || rm -f "$PUBLISHED_INDEX"
+else
+  "${SSH[@]}" "cat '$REMOTE/history/index.json'" > "$PUBLISHED_INDEX" \
+    || rm -f "$PUBLISHED_INDEX"
+fi
+EPOCH_ARGS=()
+if [ "$DECLARE_NEW_EPOCH" = "1" ]; then EPOCH_ARGS=(--declare-new-epoch); fi
+"${RENDER[@]}" publish-continuity --report-dir "$BUILD" \
+    --published-index "$PUBLISHED_INDEX" ${EPOCH_ARGS[@]+"${EPOCH_ARGS[@]}"}
 
 echo "==> Privacy gate"
 # The supported CLI owns the same deterministic gate used by `status`.  It

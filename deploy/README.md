@@ -16,7 +16,7 @@ that must be adapted by an authorised operator.
 | collector | one named Jetstream endpoint; local SQLite |
 | field sealer | one content-addressed observation per window; adds no retention |
 | report | static observatory, permanent findings, `summary.json`, and `social.json` |
-| publisher | render → privacy gate → atomic directory swap |
+| publisher | render → continuity guard → privacy gate → atomic directory swap |
 | canonical site | <https://weatherwatch.neutral.zone/> |
 | crawling | `noindex, nofollow, noarchive` in HTML and web-tier header |
 
@@ -149,6 +149,16 @@ WW_REMOTE=/path/to/static/weatherwatch \
 `--skip-generate` publishes an already-rendered staging tree. Use it only after
 the same privacy gate has inspected the tree; `publish.sh` always reruns that
 gate before transfer.
+
+Before the privacy gate, the continuity guard (`weatherwatch
+publish-continuity`) compares the candidate's `history/index.json` with the one
+currently published. A candidate whose history starts later, has fewer archived
+days, or drops a published day is refused, and so is every candidate when the
+published index cannot be read (including the very first publication). After a
+store loss, `--declare-new-epoch` (or `WW_DECLARE_NEW_EPOCH=1`) publishes the
+shorter history anyway with a discontinuity notice on the page, in
+`summary.json` and in `history/index.json`; later publishes carry the notice
+forward.
 
 The privacy gate refuses DID methods, AT URIs, CID-shaped values, Bluesky
 handles, and salted actor-token shapes anywhere in the rendered directory.

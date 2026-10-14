@@ -9,6 +9,7 @@
     weatherwatch report --output DIR
     weatherwatch status [--json] [--report-dir DIR]
     weatherwatch publication-gate --report-dir DIR [--json]
+    weatherwatch publish-continuity --report-dir DIR --published-index FILE
     weatherwatch compose --input reduced-facts.json --rule RULE_ID
     weatherwatch compose --list-rules
     weatherwatch plc-reduce --input sequenced-export.jsonl --acquired-at TIME
@@ -337,6 +338,26 @@ def _cmd_publication_gate(args) -> int:
     return 0 if result["disposition"] == "PASSED" else 2
 
 
+def _cmd_publish_continuity(args) -> int:
+    from . import publish_continuity
+    result = publish_continuity.check_and_apply(
+        args.report_dir, args.published_index,
+        declare_new_epoch=args.declare_new_epoch)
+    if args.json:
+        print(json.dumps(result, indent=2, sort_keys=True))
+    else:
+        print(f"publish continuity: {result['disposition']} "
+              f"({result['continuity']}) — {result['reason']}")
+        for reason in result["reasons"]:
+            print(f"  {reason}")
+        if result["disposition"] == "REFUSED":
+            print("  to publish anyway as a declared new history epoch, "
+                  "rerun with --declare-new-epoch")
+        elif result["disposition"] == "NEW_EPOCH":
+            print("  discontinuity notice written into the candidate")
+    return 0 if result["disposition"] in {"PASSED", "NEW_EPOCH"} else 3
+
+
 def _cmd_compose(args) -> int:
     """Compose already-reduced facts; never ingest an external source here."""
     from . import composition
@@ -503,6 +524,19 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--report-dir", required=True)
     p.add_argument("--json", action="store_true")
     p.set_defaults(fn=_cmd_publication_gate)
+
+    p = sub.add_parser(
+        "publish-continuity",
+        help="refuse a candidate that would shrink the published history")
+    p.add_argument("--report-dir", required=True)
+    p.add_argument("--published-index", default=None,
+                   help="copy of the live site's history/index.json; absent or "
+                        "unreadable means continuity is unknown")
+    p.add_argument("--declare-new-epoch", action="store_true",
+                   help="publish a shorter or unverifiable history as a new "
+                        "epoch, with an explicit discontinuity notice")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(fn=_cmd_publish_continuity)
 
     p = sub.add_parser(
         "compose", help="clock-only composition of already-reduced facts")
