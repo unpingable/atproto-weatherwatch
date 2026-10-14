@@ -45,9 +45,11 @@ def _runtime(conn, state="connected", when=NOW):
     }, sort_keys=True))
 
 
-def _active(conn, window: dict, *, cursor: int | None = None):
+def _active(conn, window: dict, *, cursor: int | None = None,
+            resume_cursor: int | None = None):
     build_run(conn, "r1", [window], ended_at=None,
-              started_at="2026-01-01T00:00:00+00:00")
+              started_at="2026-01-01T00:00:00+00:00",
+              resume_cursor=resume_cursor)
     if cursor is not None:
         db.set_meta(conn, db.cursor_key(SYNTH_ENDPOINT), str(cursor))
     _runtime(conn)
@@ -113,8 +115,11 @@ def test_empty_checkout_is_explicitly_absent_or_unknown_not_green(tmp_path):
 
 
 def test_normal_active_observation_is_supported_by_current_local_facts(conn, tmp_path):
+    # Steady state is a run that resumed from a persisted cursor; a cold start
+    # is a fresh lineage and is covered in test_total_loss.py.
     _active(conn, {"metrics": {"post.create": 12}, "coverage_state": "ok"},
-            cursor=(SYNTH_BASE + 50) * 1_000_000)
+            cursor=(SYNTH_BASE + 50) * 1_000_000,
+            resume_cursor=SYNTH_BASE * 1_000_000 - 1)
     concerns = _indexed(visibility.build_status(
         _path(conn), tmp_path / "report", now=NOW))
     for cid in ("weatherwatch.observation.coverage",

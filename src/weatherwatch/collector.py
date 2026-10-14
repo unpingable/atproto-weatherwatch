@@ -104,7 +104,10 @@ class Collector:
         self.social_sink = social_sink
 
         self.run_id = new_run_id()
-        self.health = ObservationHealth()
+        self.health = ObservationHealth(binding={
+            "endpoint": endpoint,
+            "store_id": db.get_meta(conn, db.STORE_ID_KEY),
+        })
         self.acc = Accumulator(self.run_id, bucket_width=bucket_width)
 
         self._stop = False
@@ -113,6 +116,7 @@ class Collector:
         self._messages = 0
         self._resume_from_us: int | None = None
         self._awaiting_first_event_after_resume = False
+        self._awaiting_startup_resume = False
         self._started_mono = 0.0
         self._runtime_last_write_mono = 0.0
         self._last_frame_at: str | None = None
@@ -299,6 +303,8 @@ class Collector:
 
         if self._awaiting_first_event_after_resume:
             self._awaiting_first_event_after_resume = False
+            startup = self._awaiting_startup_resume
+            self._awaiting_startup_resume = False
             if self._resume_from_us is not None:
                 gap = max(0, c.time_us - self._resume_from_us)
                 if gap > GAP_ALERT_US:
@@ -306,9 +312,12 @@ class Collector:
                         "resume landed %.1fs past the requested cursor — "
                         "treating as a gap, not a clean seam", gap / 1_000_000,
                     )
-                    self.acc.note_reconnect(gap_us=gap, resume_seam=True)
                 else:
-                    self.acc.note_reconnect(gap_us=0, resume_seam=True)
+                    gap = 0
+                if startup:
+                    self.acc.note_resume_seam(gap_us=gap)
+                else:
+                    self.acc.note_reconnect(gap_us=gap, resume_seam=True)
 
         self.health.record_event_time(c.time_us)
         self.acc.observe(c)
@@ -345,6 +354,13 @@ class Collector:
                             self._awaiting_first_event_after_resume = (
                                 self._resume_from_us is not None
                             )
+                        elif self._resume_from_us is not None:
+                            # A startup resume replays stream time this
+                            # process did not watch live. Mark the first
+                            # window as a seam, exactly as a reconnect would,
+                            # so replayed data never reads as clean live data.
+                            self._awaiting_startup_resume = True
+                            self._awaiting_first_event_after_resume = True
                         first_connection = False
                         backoff = RECONNECT_BACKOFF_START_S
 

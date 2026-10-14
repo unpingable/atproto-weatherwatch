@@ -13,9 +13,12 @@ The cursor can therefore never point past data that was not written.
 
 from __future__ import annotations
 
+import secrets
 import sqlite3
 from pathlib import Path
 from typing import TYPE_CHECKING, Sequence
+
+from . import timeutil
 
 if TYPE_CHECKING:  # avoids a circular import at runtime
     from .accumulator import ClosedWindow
@@ -116,10 +119,83 @@ def connect(path: Path | str = DEFAULT_DB_PATH) -> sqlite3.Connection:
     return conn
 
 
+#: Store identity. A store that is lost and recreated is a different store,
+#: and nothing it holds says anything about time before it existed. Recording
+#: the identity at creation lets every reader say "history begins here" instead
+#: of letting a fresh store pass for a continuation of an old one.
+STORE_ID_KEY = "store_id"
+STORE_CREATED_AT_KEY = "store_created_at"
+#: "created" when the identity was minted with the store itself;
+#: "assigned_to_existing_store" when a store that predates identity tracking
+#: was given one later, in which case `store_created_at` is only the time the
+#: identity was assigned and the store's own history starts at its first run.
+STORE_IDENTITY_ORIGIN_KEY = "store_identity_origin"
+
+
 def init_db(conn: sqlite3.Connection) -> None:
     conn.executescript(SCHEMA)
     if get_meta(conn, "schema_version") != SCHEMA_VERSION:
         set_meta(conn, "schema_version", SCHEMA_VERSION)
+    if get_meta(conn, STORE_ID_KEY) is None:
+        _assign_store_identity(conn)
+
+
+def _assign_store_identity(conn: sqlite3.Connection) -> None:
+    """Mint the store identity once. Concurrent initialisers race harmlessly:
+    the first INSERT wins and the others are ignored."""
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        if get_meta(conn, STORE_ID_KEY) is None:
+            has_runs = conn.execute(
+                "SELECT 1 FROM observation_run LIMIT 1").fetchone() is not None
+            for key, value in (
+                (STORE_ID_KEY, f"store-{secrets.token_hex(8)}"),
+                (STORE_CREATED_AT_KEY, timeutil.now_iso()),
+                (STORE_IDENTITY_ORIGIN_KEY,
+                 "assigned_to_existing_store" if has_runs else "created"),
+            ):
+                conn.execute(
+                    "INSERT OR IGNORE INTO meta(key, value) VALUES(?, ?)",
+                    (key, value))
+        conn.execute("COMMIT")
+    except Exception:
+        conn.execute("ROLLBACK")
+        raise
+
+
+def store_identity(conn: sqlite3.Connection) -> dict:
+    """What this store can say about where its own history begins.
+
+    Read-only. `history_begins_at` is the store's creation for a store that
+    minted its identity at birth, and its earliest recorded run for an older
+    store that was assigned one later. Either way nothing before it is known
+    to this store.
+    """
+    rows = {r["key"]: r["value"] for r in conn.execute(
+        "SELECT key, value FROM meta WHERE key IN (?, ?, ?)",
+        (STORE_ID_KEY, STORE_CREATED_AT_KEY, STORE_IDENTITY_ORIGIN_KEY))}
+    origin = rows.get(STORE_IDENTITY_ORIGIN_KEY)
+    begins = rows.get(STORE_CREATED_AT_KEY)
+    if origin != "created":
+        try:
+            first = conn.execute(
+                "SELECT MIN(started_at) FROM observation_run").fetchone()[0]
+        except sqlite3.Error:
+            first = None
+        begins = first or (begins if origin is not None else None)
+    return {
+        "store_id": rows.get(STORE_ID_KEY),
+        "store_created_at": rows.get(STORE_CREATED_AT_KEY),
+        "identity_origin": origin,
+        "history_begins_at": begins,
+        "earlier_history": "unknown",
+        "note": ("History begins here; earlier history unknown. This store "
+                 "records nothing from before it was created, and a store "
+                 "that is lost and recreated starts a new history with a new "
+                 "identity." if rows.get(STORE_ID_KEY) else
+                 "Store identity is not recorded; where this history begins "
+                 "and whether it continues an earlier one are unknown."),
+    }
 
 
 # --- meta ------------------------------------------------------------------

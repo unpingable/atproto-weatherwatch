@@ -170,6 +170,20 @@ class Accumulator:
             self._pending_gap_us += max(0, gap_us)
             self._pending_resume_seam = self._pending_resume_seam or resume_seam
 
+    def note_resume_seam(self, gap_us: int = 0) -> None:
+        """Record that this run began by replaying from a persisted cursor.
+
+        Same seam and gap attribution as `note_reconnect`, without counting a
+        reconnect: the process started, it did not lose a connection. The
+        window that receives the first replayed event is marked as a seam.
+        """
+        if self._open is not None:
+            self._open.gap_us += max(0, gap_us)
+            self._open.resume_seam = True
+        else:
+            self._pending_gap_us += max(0, gap_us)
+            self._pending_resume_seam = True
+
     def note_parse_error(self) -> None:
         if self._open is not None:
             self._open.parse_errors += 1

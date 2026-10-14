@@ -1747,7 +1747,8 @@ time is not evidence of complete observation.
 
 
 def _summary_json(runs, latest, series_map, totals_series, health_points,
-                  generated_at, freshness=None, conditions=None) -> dict:
+                  generated_at, freshness=None, conditions=None,
+                  store=None) -> dict:
     first = min((p.bucket_start for p in health_points), default=None)
     last = max((p.bucket_start + p.bucket_width for p in health_points),
                default=None)
@@ -1768,6 +1769,14 @@ def _summary_json(runs, latest, series_map, totals_series, health_points,
             "coverage_ratio": (observed_s / span_s) if span_s else None,
         },
         "generated_at": generated_at,
+        # Where the observation store behind this report begins. A store that
+        # was lost and recreated has a new identity and a later beginning;
+        # nothing here speaks for time before `history_begins_at`.
+        "store": store or {
+            "store_id": None, "history_begins_at": None,
+            "earlier_history": "unknown",
+            "note": "Store identity is not recorded; where this history "
+                    "begins is unknown."},
         "freshness": freshness,
         # The headline reading, in the same shape the page renders. A machine
         # reader should not have to scrape prose to learn the state, and it
@@ -1995,7 +2004,7 @@ def generate_report(
                            conditions, field_obs, field_clim)
     summary = _summary_json(runs, latest, series_map, totals_series,
                             health_points, generated_at, freshness,
-                            conditions)
+                            conditions, store=db.store_identity(conn))
 
     # Split the published windows before anything is written. Every window
     # lands on exactly one side, and the archive is written first: a summary

@@ -198,8 +198,12 @@ def _db_facts(conn: sqlite3.Connection) -> dict:
         for column in names if column.lower() in identity_names)
     raw_event_tables = sorted(set(tables) & {"event", "events", "raw_event",
                                              "raw_events"})
+    store = None
+    if "meta" in tables and "observation_run" in tables:
+        store = db.store_identity(conn)
     return {
         "tables": tables,
+        "store": store,
         "missing_tables": missing_tables,
         "schema_version": schema_version,
         "runtime": runtime,
@@ -305,11 +309,50 @@ def _database_concerns(access: dict, snapshot: dict | None,
         "cursor_is_endpoint_scoped": True,
         "cursor_and_windows_commit_atomically": True,
     }
+    # Structural coherence is necessary, not sufficient. A store recreated
+    # after a loss is perfectly coherent and remembers nothing, so continuity
+    # is only PRESENT when the current run resumed from a persisted cursor.
+    store = snapshot.get("store") or {}
+    latest = snapshot["latest_run"]
+    lineage = ("NO_RUN" if latest is None else
+               "COLD_START" if latest["resume_cursor_at_start"] is None else
+               "RESUMED")
+    continuity_facts.update({
+        "store_id": store.get("store_id"),
+        "store_created_at": store.get("store_created_at"),
+        "store_identity_origin": store.get("identity_origin"),
+        "history_begins_at": store.get("history_begins_at"),
+        "earlier_history": "unknown",
+        "lineage": lineage,
+        "latest_run_started_at": latest["started_at"] if latest else None,
+        "latest_run_resume_cursor_at_start": (
+            latest["resume_cursor_at_start"] if latest else None),
+    })
+    if coherence_failures:
+        continuity_state = DEGRADED
+        continuity_summary = "cursor/meta persistence has coherence failures"
+    elif not store.get("store_id"):
+        continuity_state = UNKNOWN
+        continuity_summary = ("store identity is not recorded; continuity "
+                              "with any earlier history cannot be established")
+    elif lineage == "NO_RUN":
+        continuity_state = UNKNOWN
+        continuity_summary = ("no observation run yet; this store's history "
+                              "has not begun and earlier history is unknown")
+    elif lineage == "COLD_START":
+        continuity_state = UNKNOWN
+        continuity_summary = (
+            "the current run started without a resume cursor (cold start): a "
+            f"fresh lineage from {latest['started_at']}; earlier history is "
+            "unknown")
+    else:
+        continuity_state = PRESENT
+        continuity_summary = ("cursor/meta persistence is structurally "
+                              "coherent and the current run resumed from a "
+                              "persisted cursor")
     continuity = _concern(
-        "weatherwatch.persistence.continuity",
-        DEGRADED if coherence_failures else PRESENT,
-        ("cursor/meta persistence has coherence failures" if coherence_failures
-         else "cursor/meta persistence is structurally coherent"),
+        "weatherwatch.persistence.continuity", continuity_state,
+        continuity_summary,
         {**continuity_facts, "failures": coherence_failures}, _iso(now))
 
     ctx = _window_context(snapshot, now)
@@ -429,6 +472,9 @@ def _cursor_concern(snapshot: dict, ctx: dict, common: dict) -> dict:
              "events_seen": health["events_seen"] if health else None,
              "advance_state": "UNKNOWN"}
     if not health:
+        if cursor is None:
+            facts["advance_state"] = "NO_CURSOR"
+            return _concern(cid, UNKNOWN, "no cursor yet (cold start)", facts)
         return _concern(cid, UNKNOWN,
                         "no current window proves that the historical cursor is advancing",
                         facts)
@@ -681,6 +727,8 @@ def build_status(db_path: str | Path = db.DEFAULT_DB_PATH,
                         if snapshot is not None else None),
                     "status_contains_subject_observations": False,
                 },
+                "store": (snapshot.get("store") if snapshot is not None
+                          else None),
             },
         },
         "concerns": generic_concerns,
@@ -703,6 +751,15 @@ def render_human(document: dict) -> str:
     )
     indexed = {c["id"]: c for c in document["concerns"]}
     lines = [f"Weatherwatch visibility  {document['generated_at']}"]
+    store = (document.get("extensions", {}).get("weatherwatch", {})
+             .get("store"))
+    if store and store.get("store_id"):
+        lines.append(
+            f"store {store['store_id']}  history begins "
+            f"{store.get('history_begins_at') or 'unknown'}; "
+            "earlier history unknown")
+    else:
+        lines.append("store identity not recorded; where history begins is unknown")
     for title, ids in groups:
         lines.append(f"\n{title}")
         for cid in ids:
