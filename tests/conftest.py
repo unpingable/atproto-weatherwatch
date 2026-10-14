@@ -78,6 +78,7 @@ def build_window(
     parse_errors: int = 0,
     rejected: int = 0,
     late: int = 0,
+    unclassified: int = 0,
     partial: int | None = None,
     lag_ewma_s: float = 0.01,
     lag_max_s: float = 0.02,
@@ -100,7 +101,7 @@ def build_window(
             " VALUES (?,?,?,?,?)", (run_id, start, width, metric, count))
     conn.execute(
         "INSERT INTO window_health VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-        (run_id, start, width, events_seen, parse_errors, 0, rejected, late,
+        (run_id, start, width, events_seen, parse_errors, unclassified, rejected, late,
          lag_ewma_s, lag_max_s, 0, gap_us, resume_seam,
          start * 1_000_000, start * 1_000_000 + observed_us, observed_us,
          coverage_state, gate_reasons, partial),
