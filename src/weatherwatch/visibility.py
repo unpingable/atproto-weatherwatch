@@ -501,6 +501,9 @@ def _delay_concern(ctx: dict, common: dict) -> dict:
                     facts, ctx["observed_at"])
 
 
+UNCLASSIFIED_AMBIGUITY_RATIO = 0.05
+
+
 def _loss_concern(ctx: dict, common: dict) -> dict:
     cid = "weatherwatch.observation.loss"
     health = ctx["health"]
@@ -514,14 +517,24 @@ def _loss_concern(ctx: dict, common: dict) -> dict:
     if not ctx["current"]:
         return _concern(cid, STALE, "known-loss counters are stale", facts,
                         ctx["observed_at"])
+    # Unclassified events were received and counted under an unknown collection
+    # or operation (new lexicons appear on an open network): that is not loss.
+    # Only a large unclassified share is ambiguity worth attention.
     loss = sum(counters[name] for name in (
-        "parse_errors", "rejected_no_time_us", "late_events", "unclassified",
-        "gap_us"))
+        "parse_errors", "rejected_no_time_us", "late_events", "gap_us"))
+    events = int(health.get("events_seen") or 0)
+    ratio = counters["unclassified"] / events if events else 0.0
+    facts["unclassified_ratio"] = round(ratio, 6)
+    facts["unclassified_ratio_bound"] = UNCLASSIFIED_AMBIGUITY_RATIO
     if loss:
-        return _concern(cid, DEGRADED, "the latest window records known loss or ambiguity",
+        return _concern(cid, DEGRADED, "the latest window records known loss",
                         facts, ctx["observed_at"])
-    return _concern(cid, PRESENT, "all instrumented known-loss counters are zero",
-                    facts, ctx["observed_at"])
+    if ratio > UNCLASSIFIED_AMBIGUITY_RATIO:
+        return _concern(cid, DEGRADED, "the latest window is ambiguous: %.1f%% of events are "
+                        "unclassified (bound %.0f%%)" % (100 * ratio, 100 * UNCLASSIFIED_AMBIGUITY_RATIO),
+                        facts, ctx["observed_at"])
+    return _concern(cid, PRESENT, "all instrumented known-loss counters are zero and "
+                    "unclassified events are within the ambiguity bound", facts, ctx["observed_at"])
 
 
 def _aggregate_concern(ctx: dict, common: dict) -> dict:

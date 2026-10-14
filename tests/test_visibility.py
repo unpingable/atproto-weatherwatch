@@ -384,3 +384,23 @@ def test_a_fresh_candidate_rendered_from_stale_aggregates_is_still_stale(
     assert candidate["state"] == "STALE"
     assert candidate["summary"] == (
         "candidate report is backed by stale aggregate state")
+
+
+def test_a_small_unclassified_share_is_not_loss_but_a_large_one_is_ambiguity(conn, tmp_path):
+    # Production 2026-10-14: about 200 of 27,000 events a minute were unclassified (new
+    # lexicons), with no gap, reconnect, parse error or late event; the concern was
+    # DEGRADED permanently. Unclassified events were received, not lost.
+    _active(conn, {"metrics": {"post.create": 1000}, "events_seen": 1000, "coverage_state": "ok",
+                   "unclassified": 8}, cursor=(SYNTH_BASE + 30) * 1_000_000)
+    loss = _indexed(visibility.build_status(_path(conn), tmp_path / "report", now=NOW))[
+        "weatherwatch.observation.loss"]
+    assert loss["state"] == "PRESENT", loss
+    assert loss["facts"]["unclassified_ratio"] == 0.008
+
+
+def test_a_large_unclassified_share_is_ambiguity(conn, tmp_path):
+    _active(conn, {"metrics": {"post.create": 100}, "events_seen": 100, "coverage_state": "ok",
+                   "unclassified": 40}, cursor=(SYNTH_BASE + 30) * 1_000_000)
+    loss = _indexed(visibility.build_status(_path(conn), tmp_path / "report", now=NOW))[
+        "weatherwatch.observation.loss"]
+    assert loss["state"] == "DEGRADED" and "ambiguous" in loss["summary"], loss
