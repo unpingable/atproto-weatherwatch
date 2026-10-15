@@ -9,10 +9,6 @@ Documentation=file:/opt/weatherwatch/deploy/README.md
 Type=oneshot
 User=weatherwatch
 Group=weatherwatch
-# Narrow, per-unit grant: group write on /var/www so the atomic directory
-# swap can stage a sibling. Applies to this oneshot only — the collector
-# never holds it, and no global group membership was changed.
-SupplementaryGroups=labelwatch
 WorkingDirectory=/opt/weatherwatch
 Environment=PYTHONDONTWRITEBYTECODE=1
 Environment=WW_MODE=local
@@ -30,13 +26,17 @@ Environment=WW_DB=/var/lib/weatherwatch/weatherwatch.sqlite
 Environment=WW_SOCIAL_DB=/var/lib/weatherwatch/social.sqlite
 Environment=WW_BUILD=/var/lib/weatherwatch/build/report
 Environment=WW_TARGET=/var/www/weatherwatch
-Environment=WW_PUBLIC_URL=https://weatherwatch.neutral.zone/
-# The canonical, tested publication path: render -> privacy gate -> atomic
-# swap. Not reimplemented here.
+# Site identity (the canonical public URL for share cards) is the operator's,
+# not the repository's: WW_PUBLIC_URL=https://... in this optional file.
+# Unset, cards are rendered without an absolute URL.
+EnvironmentFile=-/etc/weatherwatch/publish.env
+# The canonical, tested publication path: render -> privacy gate -> publish
+# into WW_TARGET. Not reimplemented here.
 ExecStart=/opt/weatherwatch/deploy/publish.sh
 
 ProtectSystem=strict
-ReadWritePaths=/var/lib/weatherwatch /var/www
+# The publisher writes its own webroot only (deploy/tmpfiles.d/weatherwatch.conf).
+ReadWritePaths=/var/lib/weatherwatch /var/www/weatherwatch
 ProtectHome=true
 PrivateTmp=true
 NoNewPrivileges=true

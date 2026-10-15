@@ -16,7 +16,7 @@ that must be adapted by an authorised operator.
 | collector | one named Jetstream endpoint; local SQLite |
 | field sealer | one content-addressed observation per window; adds no retention |
 | report | static observatory, permanent findings, `summary.json`, and `social.json` |
-| publisher | render → privacy gate → atomic directory swap |
+| publisher | render → privacy gate → publish into its own webroot |
 | canonical site | <https://weatherwatch.neutral.zone/> |
 | crawling | `noindex, nofollow, noarchive` in HTML and web-tier header |
 
@@ -75,7 +75,7 @@ The committed units express these invariants:
 - only the publisher can write the static webroot;
 - both use `ProtectSystem=strict`, `ProtectHome=true`, no privilege escalation,
   and an empty capability bounding set;
-- the publisher uses the same tested render/privacy/swap path as manual runs.
+- the publisher uses the same tested render/privacy/publish path as manual runs.
 
 The example install uses:
 
@@ -89,6 +89,12 @@ The example install uses:
 
 These are service paths, not credentials. A deployment may choose different
 locations if it preserves local-disk SQLite and the privilege split.
+`deploy/tmpfiles.d/weatherwatch.conf` creates them with the right owners; the
+publisher needs write access to its webroot and nothing above it, so it shares
+no group with any other project on the host. The site's public URL is the
+operator's, not the repository's: put `WW_PUBLIC_URL=https://...` in
+`/etc/weatherwatch/publish.env` (optional; unset renders cards without an
+absolute URL).
 
 ## Edge custody receipt
 
@@ -122,8 +128,10 @@ python -m pip install -e ".[dev]"
 ./scripts/qualify.sh
 ```
 
-Local mode renders, runs the privacy gate, stages beside the target, and swaps
-by rename:
+Local mode renders, runs the privacy gate, and publishes into the existing,
+writable target with `rsync --delay-updates --delete-after`: new and changed
+files land by rename in one burst at the end and removed files are deleted
+after, so a reader never sees a missing index or a half-written file:
 
 ```bash
 WW_MODE=local \

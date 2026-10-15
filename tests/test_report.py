@@ -843,13 +843,12 @@ def test_units_do_not_run_as_root_and_stay_confined():
         assert d["ProtectSystem"] == ["strict"]
         assert d["ProtectHome"] == ["true"]
         assert d["CapabilityBoundingSet"] == [""]
-    # only the publisher may reach the webroot, and only via a per-unit group
+    # only the publisher may reach the webroot: its own directory, with no borrowed group
     coll = _directives(_unit("weatherwatch-collector.service"))
     pub = _directives(_unit("weatherwatch-publish.service"))
     assert coll["ReadWritePaths"] == ["/var/lib/weatherwatch"]
-    assert "/var/www" in pub["ReadWritePaths"][0]
-    assert "SupplementaryGroups" not in coll
-    assert pub["SupplementaryGroups"] == ["labelwatch"]
+    assert pub["ReadWritePaths"] == ["/var/lib/weatherwatch /var/www/weatherwatch"]
+    assert "SupplementaryGroups" not in coll and "SupplementaryGroups" not in pub
     # nothing else may reach the webroot at all
     for name in _all_service_units():
         if name == "weatherwatch-publish.service":
@@ -1327,3 +1326,45 @@ def test_share_metadata_does_not_weaken_the_dark_posture(report_db, tmp_path):
     import re as _re
     for m in _re.findall(r'content="(https?://[^"]+)"', html_doc):
         assert m.startswith(PUBLIC), f"foreign origin in metadata: {m}"
+
+
+def test_no_unit_borrows_another_projects_identity():
+    """A clean host has only Weatherwatch's own account and no production URL (cartography #94)."""
+    for name in _all_service_units():
+        d = _directives(_unit(name))
+        assert "SupplementaryGroups" not in d, f"{name}: borrows a group"
+        env = " ".join(d.get("Environment", []))
+        assert "neutral.zone" not in env and "WW_PUBLIC_URL" not in env, f"{name}: site identity belongs in an env file"
+
+
+def test_publisher_writes_its_own_webroot_and_nothing_above_it():
+    d = _directives(_unit("weatherwatch-publish.service"))
+    paths = " ".join(d["ReadWritePaths"]).split()
+    assert "/var/www" not in paths and "/var/www/weatherwatch" in paths
+    tmpfiles = (Path(__file__).resolve().parents[1] / "deploy" / "tmpfiles.d" / "weatherwatch.conf").read_text()
+    assert "d /var/www/weatherwatch        0755 weatherwatch weatherwatch" in tmpfiles
+
+
+def test_local_publish_replaces_the_tree_in_place(tmp_path):
+    import os, shutil, subprocess
+    if not shutil.which("rsync"):
+        import pytest
+        pytest.skip("rsync not installed")
+    build, target, bindir = tmp_path / "build", tmp_path / "www", tmp_path / "bin"
+    build.mkdir(); target.mkdir(); bindir.mkdir()
+    (build / "index.html").write_text("new")
+    (target / "index.html").write_text("old")
+    (target / "stale.html").write_text("gone in the new tree")
+    gate = bindir / "ww"
+    gate.write_text("#!/bin/sh\n[ \"$1\" = publication-gate ] && exit 0\nexit 9\n"); gate.chmod(0o755)
+    os.chmod(tmp_path, 0o555)  # the parent is not writable: publishing must not need it
+    try:
+        p = subprocess.run([str(Path(__file__).resolve().parents[1] / "deploy" / "publish.sh"), "--skip-generate"],
+                           env={"PATH": os.environ["PATH"], "WW_MODE": "local", "WW_BUILD": str(build),
+                                "WW_TARGET": str(target), "WW_CLI": str(gate)}, capture_output=True, text=True)
+    finally:
+        os.chmod(tmp_path, 0o755)
+    assert p.returncode == 0, p.stderr
+    assert (target / "index.html").read_text() == "new"
+    assert not (target / "stale.html").exists()
+    assert not list(tmp_path.glob("www.*")), "nothing is staged beside the target"
