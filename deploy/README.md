@@ -89,7 +89,8 @@ The example install uses:
 
 These are service paths, not credentials. A deployment may choose different
 locations if it preserves local-disk SQLite and the privilege split.
-`deploy/tmpfiles.d/weatherwatch.conf` creates them with the right owners; the
+`deploy/sysusers.d/weatherwatch.conf` declares the service account and
+`deploy/tmpfiles.d/weatherwatch.conf` creates these paths with the right owners; the
 publisher needs write access to its webroot and nothing above it, so it shares
 no group with any other project on the host. The site's public URL is the
 operator's, not the repository's: put `WW_PUBLIC_URL=https://...` in
