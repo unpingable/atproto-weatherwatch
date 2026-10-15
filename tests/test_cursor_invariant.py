@@ -210,3 +210,27 @@ def test_late_event_does_not_mutate_a_committed_window(conn):
     first = closed[BASE]
     assert first.events_seen == 1, "committed window untouched"
     assert closed[BASE + WIDTH].late_events == 1, "loss recorded, not hidden"
+
+
+def test_a_replay_behind_the_high_water_is_counted_logged_once_and_not_silence(caplog):
+    """2026-10-15 production livelock: windows closed by wall clock during a
+    stalled connection put the high water past the cursor; the replay from the
+    cursor was all late, each late event logged, the loop starved, the
+    keepalive failed, and the replay restarted from the same cursor."""
+    clock = [int((BASE + 1) * 1_000_000)]
+    acc = Accumulator("run-test-000000", bucket_width=WIDTH, grace_s=5, now_us=lambda: clock[0])
+    acc.observe(ev(1))
+    clock[0] = int((BASE + 400) * 1_000_000)
+    acc.tick()                                   # silence: wall clock closes windows up to BASE+5*WIDTH
+    acc.take_closed()
+    acc.discard_open_window()                    # reconnect: nothing open while the replay lands
+    with caplog.at_level("WARNING"):
+        for i in range(1000):
+            acc.observe(ev(2 + i * 0.01))        # replayed, all behind the high water
+    assert sum("late event" in r.message for r in caplog.records) == 1
+    acc.tick()                                   # late arrivals are the stream arriving, not silence
+    assert acc.take_closed() == []
+    acc.observe(ev(400))
+    acc.observe(ev(461))                         # the replay passes the high water
+    w = acc.take_closed()[0]
+    assert w.late_events == 1000, "loss recorded on the next window, not hidden"

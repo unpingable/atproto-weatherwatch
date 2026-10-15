@@ -148,6 +148,8 @@ class Accumulator:
         self._pending_mid_window_start = True  # the run's first window
         self._parse_errors_before_first_window = 0
         self._rejected_before_first_window = 0
+        self._pending_late_events = 0
+        self._late_logged_bucket: int | None = None
 
     # -- signals from the collector ---------------------------------------
 
@@ -192,13 +194,27 @@ class Accumulator:
 
         if self._high_water_bucket is not None and bucket <= self._high_water_bucket:
             # Window already committed. Do not mutate history; record the
-            # arrival against the open window so the loss is visible.
+            # arrival against the open window (or the next one) so the loss
+            # is visible.
             if self._open is not None:
                 self._open.late_events += 1
-            LOG.warning(
-                "late event for closed window %d (high water %d)",
-                bucket, self._high_water_bucket,
-            )
+            else:
+                self._pending_late_events += 1
+            # A late arrival is still the stream arriving: it must not read as
+            # silence to tick(), or a replay behind the high water would let
+            # wall clock march more empty windows past it.
+            self._last_event_wall_us = self._now_us()
+            # One line per closed window, not per event: a replay of a busy
+            # minute is tens of thousands of late events, and logging each one
+            # starved the event loop until the keepalive failed and the replay
+            # restarted from the same cursor (2026-10-15 production livelock).
+            # The count is in the STATS line of the window that receives it.
+            if bucket != self._late_logged_bucket:
+                self._late_logged_bucket = bucket
+                LOG.warning(
+                    "late events for closed window %d (high water %d); counted, not applied",
+                    bucket, self._high_water_bucket,
+                )
             return
 
         if self._open is None:
@@ -240,6 +256,8 @@ class Accumulator:
             w.observed_from_us = w.window_start_us
         w.parse_errors = self._parse_errors_before_first_window
         w.rejected_no_time_us = self._rejected_before_first_window
+        w.late_events = self._pending_late_events
+        self._pending_late_events = 0
         self._parse_errors_before_first_window = 0
         self._rejected_before_first_window = 0
         self._pending_reconnects = 0
