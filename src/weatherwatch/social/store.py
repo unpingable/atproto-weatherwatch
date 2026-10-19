@@ -29,6 +29,7 @@ overrun is recorded, never silently absorbed.
 
 from __future__ import annotations
 
+import logging
 import secrets
 import sqlite3
 from dataclasses import dataclass
@@ -39,6 +40,24 @@ from .edges import SKIP_REASONS, EdgeEvent, StatusEvent
 from .envelope import DetectionEnvelope, envelope_to_dict, receipt_hash, stable_json
 
 DEFAULT_EDGE_DB_PATH = Path("data/social.sqlite3")
+
+LOG = logging.getLogger(__name__)
+
+#: Explicit rather than inherited. This is SQLite's default, stated so that a
+#: future "speed-up" that disables automatic checkpointing has to delete a
+#: named constant and the test that pins it.
+WAL_AUTOCHECKPOINT_PAGES = 1000
+
+#: After a checkpoint lets the log restart, SQLite truncates the WAL file back
+#: to this size instead of keeping its high-water mark forever. Without it a
+#: single burst (one field reseal is ~200 MB of frames) leaves a file that size
+#: on disk for the life of the store.
+JOURNAL_SIZE_LIMIT_BYTES = 64 * 1024 * 1024
+
+#: How long a job's close path will wait for readers to leave before settling
+#: for a PASSIVE checkpoint. Short on purpose: the jobs that close are batch
+#: oneshots, and a checkpoint is housekeeping, never a reason to hang or fail.
+CHECKPOINT_BUSY_TIMEOUT_MS = 1000
 
 #: Hard cap on rows buffered before a forced flush. Beyond this the sink drops
 #: and *counts* rather than growing without bound.
@@ -161,7 +180,82 @@ def connect(path: Path | str = DEFAULT_EDGE_DB_PATH) -> sqlite3.Connection:
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA synchronous=NORMAL")
     conn.execute("PRAGMA busy_timeout=5000")
+    conn.execute(f"PRAGMA wal_autocheckpoint={WAL_AUTOCHECKPOINT_PAGES}")
+    conn.execute(f"PRAGMA journal_size_limit={JOURNAL_SIZE_LIMIT_BYTES}")
     return conn
+
+
+def checkpoint(
+    conn: sqlite3.Connection,
+    busy_timeout_ms: int = CHECKPOINT_BUSY_TIMEOUT_MS,
+) -> dict:
+    """Try to empty and truncate the WAL; settle for PASSIVE when busy.
+
+    Measured on the deployed host: a 1.64 GB `social.sqlite-wal` that never
+    reset, because nothing ever checkpointed explicitly and some job almost
+    always had the file open. Automatic checkpoints are PASSIVE: they copy
+    frames back but cannot restart the log while any reader holds a snapshot,
+    and nothing ever shrank the file.
+
+    TRUNCATE waits (up to `busy_timeout_ms`) for readers to leave, copies
+    every frame back, and truncates the log to zero bytes. If a reader is
+    still mid-snapshot when the wait expires, PASSIVE copies what it can
+    without waiting at all. Never raises: a checkpoint is housekeeping, and a
+    job that sealed its work must not fail because a reader was slow.
+
+    Returns `{"mode", "busy", "log_frames", "checkpointed_frames",
+    "truncated"}`; `mode` is "TRUNCATE", "PASSIVE", "skipped" (open
+    transaction) or "failed".
+    """
+    out = {"mode": "skipped", "busy": None, "log_frames": None,
+           "checkpointed_frames": None, "truncated": False}
+    if conn.in_transaction:
+        return out
+    try:
+        previous = conn.execute("PRAGMA busy_timeout").fetchone()[0]
+    except sqlite3.Error:
+        out["mode"] = "failed"
+        return out
+    try:
+        conn.execute(f"PRAGMA busy_timeout={int(busy_timeout_ms)}")
+        for mode in ("TRUNCATE", "PASSIVE"):
+            try:
+                busy, log, done = conn.execute(
+                    f"PRAGMA wal_checkpoint({mode})").fetchone()
+            except sqlite3.OperationalError:
+                busy, log, done = 1, None, None
+            out.update(mode=mode, busy=busy, log_frames=log,
+                       checkpointed_frames=done)
+            if not busy:
+                out["truncated"] = mode == "TRUNCATE"
+                return out
+            # PASSIVE never waits, so drop the wait before falling back.
+            conn.execute("PRAGMA busy_timeout=0")
+        LOG.info("social store checkpoint incomplete: %s", out)
+        return out
+    except sqlite3.Error:
+        out["mode"] = "failed"
+        LOG.warning("social store checkpoint failed", exc_info=True)
+        return out
+    finally:
+        try:
+            conn.execute(f"PRAGMA busy_timeout={int(previous)}")
+        except sqlite3.Error:
+            pass
+
+
+def close(conn: sqlite3.Connection) -> dict:
+    """The close path every job uses: checkpoint, then close.
+
+    Each writer is responsible for the log it grew. Returns the checkpoint
+    result so callers can report it.
+    """
+    result = checkpoint(conn)
+    try:
+        conn.close()
+    except sqlite3.Error:
+        pass
+    return result
 
 
 def init_db(conn: sqlite3.Connection) -> None:
