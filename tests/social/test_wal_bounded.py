@@ -118,3 +118,121 @@ def test_checkpoint_is_skipped_inside_an_open_transaction(tmp_path):
     finally:
         conn.execute("ROLLBACK")
         conn.close()
+
+
+# --- every job that opens the store closes it through the same path --------
+
+def _weather_db(tmp_path):
+    from weatherwatch import db
+    from tests.social.field.conftest import write_hourly_run
+
+    path = tmp_path / "weather.sqlite"
+    conn = db.connect(path)
+    db.init_db(conn)
+    write_hourly_run(conn, "run-a", n_days=10)
+    conn.close()
+    return path
+
+
+def _range_args():
+    from weatherwatch import timeutil
+    from tests.social.field.conftest import BASE, HOUR
+
+    return ["--since", timeutil.us_to_iso(BASE * 1_000_000),
+            "--until", timeutil.us_to_iso((BASE + 216 * HOUR) * 1_000_000)]
+
+
+def _leave_a_wal(path):
+    """A writer that closed without checkpointing: the pre-fix shape."""
+    conn = store.connect(path)
+    _write_some(conn)
+    conn.close()
+    assert _wal(path) > 0
+
+
+def test_field_sealing_leaves_no_wal_behind(tmp_path, capsys):
+    from weatherwatch import cli
+
+    weather = _weather_db(tmp_path)
+    social = tmp_path / "social.sqlite"
+    peer = idle_peer(social)
+    try:
+        rc = cli.main(["--db", str(weather), "social", "field", *_range_args(),
+                       "--social-db", str(social)])
+        assert rc == 0, capsys.readouterr().err
+        assert _wal(social) == 0, "field sealing left its WAL in place"
+    finally:
+        peer.close()
+
+
+def test_detection_leaves_no_wal_behind(tmp_path, capsys):
+    from weatherwatch import cli
+
+    weather = _weather_db(tmp_path)
+    social = tmp_path / "social.sqlite"
+    peer = idle_peer(social)
+    try:
+        _leave_a_wal(social)
+        rc = cli.main(["--db", str(weather), "social", "detect",
+                       "--tiers", "aggregate", *_range_args(),
+                       "--social-db", str(social)])
+        assert rc == 0, capsys.readouterr().err
+        assert _wal(social) == 0, "detection left its WAL in place"
+    finally:
+        peer.close()
+
+
+def test_detection_refusal_still_closes_through_the_checkpoint(tmp_path,
+                                                                capsys):
+    from weatherwatch import cli
+
+    weather = _weather_db(tmp_path)
+    social = tmp_path / "social.sqlite"
+    peer = idle_peer(social)
+    try:
+        _leave_a_wal(social)
+        rc = cli.main(["--db", str(weather), "social", "detect",
+                       "--tiers", "edge", "--social-db", str(social)])
+        assert rc == 2
+        assert _wal(social) == 0, "an early return skipped the close path"
+    finally:
+        peer.close()
+
+
+def test_the_collector_sink_truncates_on_flush_and_on_close(tmp_path):
+    from weatherwatch.social.edges import EdgeEvent
+    from weatherwatch.social.sink import SocialSink
+
+    social = tmp_path / "social.sqlite"
+    sink = SocialSink.open(social, "run-x")
+    peer = idle_peer(social)
+    try:
+        def edges(start):
+            for i in range(start, start + 3_000):
+                sink.writer.add_edge(EdgeEvent(
+                    observed_us=1_000_000 + i, actor_did=f"did:plc:a{i}",
+                    collection="block", op="create", subject_kind="did",
+                    subject_ref="did:plc:t", rkey=f"r{i}", rev="1",
+                    cid=f"c{i}", record_created_at="2026-01-01T00:00:00Z"))
+
+        edges(0)
+        sink.flush(2_000_000)
+        assert _wal(social) == 0, "a flush with no reader left the WAL"
+        edges(3_000)
+        sink.close(3_000_000)
+        assert _wal(social) == 0, "the sink's close left the WAL in place"
+    finally:
+        peer.close()
+
+
+def test_the_report_reader_releases_and_truncates(tmp_path):
+    from weatherwatch import report
+
+    social = tmp_path / "social.sqlite"
+    peer = idle_peer(social)
+    try:
+        _leave_a_wal(social)
+        report._load_conditions(social, "2026-01-01T00:00:00Z")
+        assert _wal(social) == 0
+    finally:
+        peer.close()

@@ -1893,7 +1893,10 @@ def _load_conditions(social_db, generated_at: str) -> tuple[dict, list, dict]:
             "The field observation store could not be read.").as_dict(),
             [], {})
     finally:
-        conn.close()
+        # Released here, before any rendering starts, and through the store's
+        # close path so the publisher also truncates a WAL nobody else is
+        # reading at that moment.
+        _social_store.close(conn)
 
     # `now` is what lets the instrument distinguish "the network went quiet"
     # from "the station stopped reporting" — identical readings, opposite

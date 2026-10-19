@@ -43,8 +43,17 @@ def _bounds(args) -> tuple[int | None, int | None]:
 
 def cmd_detect(args) -> int:
     """Run sensors and persist sealed envelopes into the edge store."""
-    since_us, until_us = _bounds(args)
     edge_conn = store.connect(args.social_db)
+    try:
+        return _detect(args, edge_conn)
+    finally:
+        # Every exit, including refusals: the writer that grew the WAL is the
+        # one that checkpoints it (see `store.checkpoint`).
+        store.close(edge_conn)
+
+
+def _detect(args, edge_conn) -> int:
+    since_us, until_us = _bounds(args)
     store.init_db(edge_conn)
     sealed: list = []
 
@@ -75,7 +84,6 @@ def cmd_detect(args) -> int:
                 # correct; surface it as something the operator can act on
                 # rather than as a traceback.
                 wconn.close()
-                edge_conn.close()
                 print(f"range too large: {e}\n"
                       f"Pass --last (e.g. --last 7d) or --since/--until.",
                       file=sys.stderr)
@@ -109,7 +117,6 @@ def cmd_detect(args) -> int:
             return 3
 
     n = episodes.persist(edge_conn, sealed)
-    edge_conn.close()
     print(json.dumps({"episodes": n, "tiers": tiers}, indent=2))
     return 0
 
@@ -125,7 +132,7 @@ def cmd_episodes(args) -> int:
     conn = store.connect(args.social_db)
     store.init_db(conn)
     rows = store.list_episodes(conn, args.since, args.until, args.limit)
-    conn.close()
+    store.close(conn)
     if args.json:
         print(json.dumps([dict(r) for r in rows], indent=2))
         return 0
@@ -141,7 +148,7 @@ def cmd_report(args) -> int:
     conn = store.connect(args.social_db)
     store.init_db(conn)
     rows = store.list_episodes(conn, args.since, args.until, args.limit)
-    conn.close()
+    store.close(conn)
 
     from .envelope import DetectionEnvelope, EvidenceStub, SubjectRef
     envs = []
@@ -176,9 +183,7 @@ def cmd_report(args) -> int:
 
 def cmd_field(args) -> int:
     """Build the climatology and seal one observation per window."""
-    from .field import observation as fobs
     from .field import run as frun
-    from .field import viz as fviz
 
     since_us, until_us = _bounds(args)
     wconn = weather_db.connect(args.db)
@@ -205,6 +210,16 @@ def cmd_field(args) -> int:
         return 2
 
     econn = store.connect(args.social_db)
+    try:
+        return _seal_field(args, econn, points, clim, obs, cands)
+    finally:
+        store.close(econn)
+
+
+def _seal_field(args, econn, points, clim, obs, cands) -> int:
+    from .field import observation as fobs
+    from .field import viz as fviz
+
     store.init_db(econn)
     fobs.init(econn)
     now = timeutil.now_iso()
@@ -271,7 +286,6 @@ def cmd_field(args) -> int:
             print("refusing to write the calibration surface into the public "
                   "output directory; give --station-output its own path",
                   file=sys.stderr)
-            econn.close()
             return 2
         spath.mkdir(parents=True, exist_ok=True)
         (spath / "index.html").write_text(
@@ -281,7 +295,6 @@ def cmd_field(args) -> int:
         out["station_page"] = str(spath / "index.html")
         out["baseline_report"] = str(spath / "climatology.md")
 
-    econn.close()
     print(json.dumps(out, indent=2))
     return 0
 
@@ -303,7 +316,7 @@ def cmd_custody(args) -> int:
     statuses = conn.execute(
         "SELECT status, COUNT(*) AS n FROM status_event "
         "GROUP BY status ORDER BY n DESC").fetchall()
-    conn.close()
+    store.close(conn)
     out = {
         "runs": [dict(r) for r in rows],
         "edges": [dict(r) for r in counts],
