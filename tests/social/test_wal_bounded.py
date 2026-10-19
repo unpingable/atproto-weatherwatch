@@ -199,29 +199,71 @@ def test_detection_refusal_still_closes_through_the_checkpoint(tmp_path,
         peer.close()
 
 
-def test_the_collector_sink_truncates_on_flush_and_on_close(tmp_path):
+def _edges(sink, start, n=3_000):
     from weatherwatch.social.edges import EdgeEvent
-    from weatherwatch.social.sink import SocialSink
+    for i in range(start, start + n):
+        sink.writer.add_edge(EdgeEvent(
+            observed_us=1_000_000 + i, actor_did=f"did:plc:a{i}",
+            collection="block", op="create", subject_kind="did",
+            subject_ref="did:plc:t", rkey=f"r{i}", rev="1",
+            cid=f"c{i}", record_created_at="2026-01-01T00:00:00Z"))
 
+
+def test_the_collector_flush_never_truncates_and_close_does(tmp_path,
+                                                            monkeypatch):
+    """The flush runs on the collector's ingest path. A TRUNCATE there is a
+    synchronous frame copy, fsync and truncate every minute -- and up to a
+    whole field run's frames when a job's close had to settle for PASSIVE.
+    The flush leaves truncation to the batch jobs; the sink's close, at
+    shutdown, still truncates."""
+    from weatherwatch.social import sink as sink_mod
+
+    calls = []
+    real = sink_mod.checkpoint
+
+    def spy(conn, **kwargs):
+        calls.append(kwargs)
+        return real(conn, **kwargs)
+
+    monkeypatch.setattr(sink_mod, "checkpoint", spy)
     social = tmp_path / "social.sqlite"
-    sink = SocialSink.open(social, "run-x")
+    sink = sink_mod.SocialSink.open(social, "run-x")
     peer = idle_peer(social)
     try:
-        def edges(start):
-            for i in range(start, start + 3_000):
-                sink.writer.add_edge(EdgeEvent(
-                    observed_us=1_000_000 + i, actor_did=f"did:plc:a{i}",
-                    collection="block", op="create", subject_kind="did",
-                    subject_ref="did:plc:t", rkey=f"r{i}", rev="1",
-                    cid=f"c{i}", record_created_at="2026-01-01T00:00:00Z"))
-
-        edges(0)
+        _edges(sink, 0)
         sink.flush(2_000_000)
-        assert _wal(social) == 0, "a flush with no reader left the WAL"
-        edges(3_000)
-        sink.close(3_000_000)
+        assert calls == [], "a small WAL needs no checkpoint from the collector"
+        assert _wal(social) > 0
+
+        monkeypatch.setattr(sink_mod, "FLUSH_CHECKPOINT_WAL_BYTES", 1)
+        _edges(sink, 3_000)
+        sink.flush(3_000_000)
+        assert calls == [{"busy_timeout_ms": 0, "passive_only": True}]
+        assert _wal(social) > 0, "the collector's flush truncated the WAL"
+
+        _edges(sink, 6_000)
+        sink.close(4_000_000)
         assert _wal(social) == 0, "the sink's close left the WAL in place"
     finally:
+        peer.close()
+
+
+def test_the_collector_threshold_matches_the_journal_size_limit():
+    from weatherwatch.social import sink as sink_mod
+    assert sink_mod.FLUSH_CHECKPOINT_WAL_BYTES == store.JOURNAL_SIZE_LIMIT_BYTES
+
+
+def test_a_passive_only_checkpoint_does_not_truncate(tmp_path):
+    path = tmp_path / "social.sqlite"
+    peer = idle_peer(path)
+    conn = store.connect(path)
+    try:
+        _write_some(conn)
+        result = store.checkpoint(conn, passive_only=True)
+        assert result["mode"] == "PASSIVE" and result["truncated"] is False
+        assert _wal(path) > 0
+    finally:
+        conn.close()
         peer.close()
 
 

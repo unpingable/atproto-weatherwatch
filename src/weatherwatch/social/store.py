@@ -188,6 +188,7 @@ def connect(path: Path | str = DEFAULT_EDGE_DB_PATH) -> sqlite3.Connection:
 def checkpoint(
     conn: sqlite3.Connection,
     busy_timeout_ms: int = CHECKPOINT_BUSY_TIMEOUT_MS,
+    passive_only: bool = False,
 ) -> dict:
     """Try to empty and truncate the WAL; settle for PASSIVE when busy.
 
@@ -202,6 +203,9 @@ def checkpoint(
     still mid-snapshot when the wait expires, PASSIVE copies what it can
     without waiting at all. Never raises: a checkpoint is housekeeping, and a
     job that sealed its work must not fail because a reader was slow.
+
+    `passive_only` skips TRUNCATE: copy frames back without taking the writer
+    lock, waiting, or truncating. For a caller on a latency-sensitive path.
 
     Returns `{"mode", "busy", "log_frames", "checkpointed_frames",
     "truncated"}`; `mode` is "TRUNCATE", "PASSIVE", "skipped" (open
@@ -218,7 +222,8 @@ def checkpoint(
         return out
     try:
         conn.execute(f"PRAGMA busy_timeout={int(busy_timeout_ms)}")
-        for mode in ("TRUNCATE", "PASSIVE"):
+        for mode in (("PASSIVE",) if passive_only
+                     else ("TRUNCATE", "PASSIVE")):
             try:
                 busy, log, done = conn.execute(
                     f"PRAGMA wal_checkpoint({mode})").fetchone()
@@ -242,6 +247,16 @@ def checkpoint(
             conn.execute(f"PRAGMA busy_timeout={int(previous)}")
         except sqlite3.Error:
             pass
+
+
+def wal_bytes(conn: sqlite3.Connection) -> int:
+    """Current size of this connection's WAL file; 0 if absent or unknown."""
+    try:
+        row = conn.execute("PRAGMA database_list").fetchone()
+        path = row[2] if row else ""
+        return Path(f"{path}-wal").stat().st_size if path else 0
+    except (sqlite3.Error, OSError):
+        return 0
 
 
 def close(conn: sqlite3.Connection) -> dict:

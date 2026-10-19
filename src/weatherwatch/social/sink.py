@@ -21,13 +21,19 @@ from .edges import SKIP_MALFORMED, EdgeEvent, Skipped, StatusEvent, extract
 from .store import (
     DEFAULT_FLUSH_INTERVAL_S,
     EdgeWriter,
+    JOURNAL_SIZE_LIMIT_BYTES,
     checkpoint,
     close as close_store,
     connect,
     init_db,
+    wal_bytes,
 )
 
 LOG = logging.getLogger("weatherwatch.social.sink")
+
+#: Below this the collector leaves the WAL to SQLite's own auto-checkpoint.
+#: The same size `journal_size_limit` trims a restarted log back to.
+FLUSH_CHECKPOINT_WAL_BYTES = JOURNAL_SIZE_LIMIT_BYTES
 
 
 class SocialSink:
@@ -95,12 +101,13 @@ class SocialSink:
             LOG.exception("social sink flush failed; weather lane unaffected")
             self._errors += 1
             return
-        # The collector holds this connection for its whole life, so it is
-        # the one writer that never reaches a close path in normal running.
-        # Try to truncate after every committed batch, but never wait for it:
-        # this runs on the collector's per-window callback, and a reader on
-        # the file must cost the weather lane nothing.
-        checkpoint(self.conn, busy_timeout_ms=0)
+        # This runs on the collector's ingest path. Truncation belongs to the
+        # batch jobs' close path; here, only when the log has grown past the
+        # size SQLite would trim it to (e.g. a field run's frames left behind
+        # by a close that had to settle for PASSIVE), copy frames back
+        # PASSIVE: no writer lock, no wait, no truncate.
+        if wal_bytes(self.conn) > FLUSH_CHECKPOINT_WAL_BYTES:
+            checkpoint(self.conn, busy_timeout_ms=0, passive_only=True)
 
     def close(self, now_us: int) -> None:
         self.flush(now_us)
