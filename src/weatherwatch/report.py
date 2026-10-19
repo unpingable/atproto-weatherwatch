@@ -1897,12 +1897,15 @@ def _load_conditions(social_db, generated_at: str) -> tuple[dict, list, dict]:
             return (_conditions.offline(
                 "No baseline has been sealed yet, so there is nothing to "
                 "compare a reading against.").as_dict(), [], {})
+        # By time, over the range the baseline was fitted on; the stored
+        # documents carry their seal-time baseline and are re-scored against
+        # this one below, after the store is released (DECISIONS.md §8).
         docs, _total = _field_obs.load_observations(
-            conn, climatology_id=clim.get("climatology_id"))
+            conn, since=clim.get("ts_start"))
         if not docs:
             return (_conditions.offline(
-                "A baseline exists, but no observation has been filed against "
-                "it.").as_dict(), [], clim)
+                "A baseline exists, but no observation has been filed within "
+                "its range.").as_dict(), [], clim)
     except sqlite3.Error:
         return (_conditions.offline(
             "The field observation store could not be read.").as_dict(),
@@ -1913,6 +1916,7 @@ def _load_conditions(social_db, generated_at: str) -> tuple[dict, list, dict]:
         # reading at that moment.
         _social_store.close(conn)
 
+    docs = _field_obs.rescore(docs, clim)
     # `now` is what lets the instrument distinguish "the network went quiet"
     # from "the station stopped reporting" — identical readings, opposite
     # meanings. Without it a dead collector reads as weather.

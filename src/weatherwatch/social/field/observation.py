@@ -89,6 +89,80 @@ PROVENANCE_EVIDENCE_KEYS = (
 )
 
 
+def _baseline_evidence(clim: dict | None, hour: int) -> tuple[dict, dict]:
+    """The baseline evidence a window carries when scored against `clim`.
+
+    `clim` is a climatology *document* (`Climatology.as_dict()` or the row
+    `load_climatology` returns). One derivation for both the sealer and the
+    reader: `observe()` stamps this onto a fresh observation, and `rescore()`
+    re-derives it for a stored one, so the two cannot disagree about what a
+    baseline says for an hour. Returns `(confidence_fields,
+    provenance_fields)`, exactly the keys in `CONFIDENCE_EVIDENCE_KEYS` and
+    `PROVENANCE_EVIDENCE_KEYS` minus `run_ids`, which is seal-time
+    provenance and not baseline evidence.
+    """
+    baseline_days, n_eff, support, note = 0, None, UNSUPPORTED, (
+        "No climatology supplied; this observation is unconditioned.")
+    provenance: dict = {}
+    if clim is not None:
+        ref = (clim.get("quantities") or {}).get("interaction_velocity")
+        if ref is not None:
+            cell = next((c for c in ref.get("diurnal", ())
+                         if c.get("hour") == hour), None)
+            baseline_days = cell["n_days"] if cell else 0
+            n_eff = (ref.get("overall") or {}).get("n_eff")
+            support = ref.get("support", UNSUPPORTED)
+            note = ref.get("support_note", "")
+        provenance = {
+            "climatology_id": clim.get("climatology_id"),
+            "climatology_days": clim.get("n_days"),
+            "hour_of_week_supported": clim.get("hour_of_week_supported"),
+        }
+    confidence = {
+        "baseline_days": baseline_days,
+        "baseline_n_eff": (round(n_eff, 2) if n_eff is not None else None),
+        "support": support,
+        "note": note,
+    }
+    return confidence, provenance
+
+
+def rescore(documents: list, climatology: dict | None) -> list:
+    """Stored observations re-scored against `climatology`, the document the
+    reader is about to compare them with.
+
+    An observation is stored once, with the baseline evidence it was sealed
+    with (DECISIONS.md §8). The page still has to show every window against
+    the *current* baseline, so the reader re-derives that evidence here
+    instead of the sealer rewriting the archive. Identity is untouched by
+    construction: every key written is in `CONFIDENCE_EVIDENCE_KEYS` or
+    `PROVENANCE_EVIDENCE_KEYS`, which `identity_document` drops, and that is
+    asserted below. Returns new dicts; the stored documents stay as sealed.
+    """
+    out = []
+    for document in documents:
+        hour = _hour_of_window(document.get("ts_start"))
+        confidence, provenance = _baseline_evidence(climatology, hour)
+        assert set(confidence) <= set(CONFIDENCE_EVIDENCE_KEYS)
+        assert set(provenance) <= set(PROVENANCE_EVIDENCE_KEYS)
+        rescored = dict(document)
+        rescored["confidence"] = {**(document.get("confidence") or {}),
+                                  **confidence}
+        rescored["provenance"] = {**(document.get("provenance") or {}),
+                                  **provenance}
+        out.append(rescored)
+    return out
+
+
+def _hour_of_window(ts_start: str | None) -> int:
+    import datetime
+    try:
+        return datetime.datetime.fromisoformat(
+            (ts_start or "").replace("Z", "+00:00")).hour
+    except ValueError:
+        return -1
+
+
 def identity_document(document: dict) -> dict:
     """Project a stored observation document onto the fields that identify it.
 
@@ -176,24 +250,16 @@ def observe(
 
     hour = datetime.datetime.fromtimestamp(
         point.bucket_start, tz=datetime.timezone.utc).hour
-    baseline_days, n_eff, support, note = 0, None, UNSUPPORTED, (
-        "No climatology supplied; this observation is unconditioned.")
-    if clim is not None:
-        ref = next((q for n, q in sorted(clim.quantities.items())
-                    if n == "interaction_velocity"), None)
-        if ref is not None:
-            cell = next((c for c in ref.diurnal if c.hour == hour), None)
-            baseline_days = cell.n_days if cell else 0
-            n_eff = ref.overall.n_eff
-            support = ref.support
-            note = ref.support_note
+    # The same derivation the reader uses to re-score a stored window. The
+    # climatology document is built once per seal, not once per window:
+    # `as_dict()` serialises every distribution and `climatology_id` hashes
+    # them, so per-window calls cost minutes over a month of minute windows.
+    evidence, baseline_prov = _baseline_evidence(
+        _climatology_document(clim) if clim is not None else None, hour)
 
     nominal = point.bucket_width or 1
     prov = dict(provenance or {})
-    if clim is not None:
-        prov["climatology_id"] = clim.climatology_id
-        prov["climatology_days"] = clim.n_days
-        prov["hour_of_week_supported"] = clim.hour_of_week_supported
+    prov.update(baseline_prov)
 
     return SocialWeatherObservation(
         schema_version=FIELD_SCHEMA_VERSION,
@@ -207,14 +273,25 @@ def observe(
             coverage=round(min(point.observed_seconds / nominal, 1.0), 4),
             eligible=point.eligible,
             quality=point.quality,
-            baseline_days=baseline_days,
-            baseline_n_eff=(round(n_eff, 2) if n_eff is not None else None),
-            support=support,
-            note=note,
+            **evidence,
         ),
         provenance=prov,
         non_claims=non_claims_for(sorted(metrics)),
     )
+
+
+def _climatology_document(clim: Climatology) -> dict:
+    """`clim.as_dict()`, computed once per `Climatology` instance.
+
+    A `Climatology` is a frozen dataclass built once per seal; the document
+    is cached on it the same way `climatology_id` is (through `__dict__`,
+    which is what works on a frozen dataclass).
+    """
+    cached = clim.__dict__.get("_document")
+    if cached is None:
+        cached = clim.as_dict()
+        clim.__dict__["_document"] = cached
+    return cached
 
 
 # --- storage ---------------------------------------------------------------
@@ -277,58 +354,59 @@ SEAL_BATCH = 500
 
 def save_observations(conn: sqlite3.Connection, obs: list,
                       sealed_at: str) -> dict:
-    """Seal observations, writing only the ones that actually changed.
+    """Seal observations, writing only the ones not already stored.
 
-    Returns `{"considered", "written", "unchanged"}`. The breakdown is the
-    point: on a healthy reseal `written` should be the number of windows that
-    arrived, and a run that reports `written == considered` over an unchanged
-    range is the archive forking again.
+    **An observation is stored once, with the baseline evidence it was sealed
+    with.** The climatology is separately versioned derived state: a refit
+    moves `climatology_id` on essentially every run, and before 2026-10-19
+    that moved the baseline evidence inside every stored document, so a run
+    that advanced by five windows rewrote all ~43,200 rows of the 30-day
+    range (~215 MB of write-ahead log, measured; DECISIONS.md §8). The
+    reader now re-derives baseline evidence against the newest climatology at
+    render (`rescore`), so the stored document is the archive and the page
+    stays current without the archive being rewritten.
 
-    Once identity stopped hashing over the sliding baseline (see
-    `identity_document`), a reseal produced the same ids and the same
-    documents, and `INSERT OR REPLACE` still deleted and rewrote all 43,200
-    rows every time — about 180 MB of redundant page writes per run, measured.
-    That was never *growth*, so it never showed up as a size problem; it was
-    just the same work done again, and it is what made a tight producer
-    cadence look unaffordable.
+    Returns `{"considered", "written", "unchanged"}`. On a healthy run
+    `written` is the number of windows that arrived, and a run that reports
+    `written == considered` over an unchanged range is the archive forking
+    again.
 
-    `sealed_at` is deliberately left alone on an unchanged row. It records when
-    this observation was sealed, not when it was most recently re-confirmed,
-    and the first answer is the true one.
+    `sealed_at` records when an observation was sealed, not when it was most
+    recently re-confirmed; an existing row is never touched.
 
-    Works in batches of `SEAL_BATCH`: each batch builds its documents, reads
-    back only its own stored rows, and writes what changed before the next
-    batch is built. Building every document and then reading every stored one
-    back first held both copies of the range at once: on a synthetic 30-day
-    minute store (43,205 windows) this call grew resident memory by ~120 MB;
-    batched, by ~3 MB. The caller's transaction still spans the whole call,
-    so the rows written are the same either way.
+    Works in batches of `SEAL_BATCH`: each batch looks up its own ids and
+    builds documents only for the ones to write, so memory does not scale
+    with the range. The caller's transaction still spans the whole call.
     """
     considered = written = 0
     for start in range(0, len(obs), SEAL_BATCH):
+        batch = obs[start:start + SEAL_BATCH]
+        ids = [o.observation_id for o in batch]
+        marks = ",".join("?" * len(ids))
+        existing = {r[0] for r in conn.execute(
+            f"SELECT observation_id FROM weather_observation "
+            f"WHERE observation_id IN ({marks})", ids)}
         rows = []
-        for o in obs[start:start + SEAL_BATCH]:
-            document = o.as_dict()
+        for o, observation_id in zip(batch, ids):
+            if observation_id in existing:
+                continue
+            document = o.as_dict(include_id=False)
+            document["observation_id"] = observation_id
             rows.append((
-                document["observation_id"], o.ts_start, o.ts_end, o.window,
+                observation_id, o.ts_start, o.ts_end, o.window,
                 o.confidence.support, o.confidence.coverage,
                 1 if o.confidence.eligible else 0,
                 o.provenance.get("climatology_id", ""),
                 stable_json(document), sealed_at))
-        marks = ",".join("?" * len(rows))
-        existing = dict(conn.execute(
-            f"SELECT observation_id, document FROM weather_observation "
-            f"WHERE observation_id IN ({marks})", [r[0] for r in rows]))
-        changed = [r for r in rows if existing.get(r[0]) != r[8]]
-        if changed:
+        if rows:
             conn.executemany(
-                "INSERT OR REPLACE INTO weather_observation(observation_id, "
+                "INSERT INTO weather_observation(observation_id, "
                 "ts_start, ts_end, window, support, coverage, eligible, "
                 "climatology_id, document, sealed_at) "
                 "VALUES(?,?,?,?,?,?,?,?,?,?)",
-                changed)
-        considered += len(rows)
-        written += len(changed)
+                rows)
+        considered += len(batch)
+        written += len(rows)
     return {"considered": considered, "written": written,
             "unchanged": considered - written}
 
@@ -348,10 +426,11 @@ def load_observations(conn: sqlite3.Connection, since: str | None = None,
     Returns the total as well, so the caller can disclose a truncation rather
     than present a partial archive as a whole one.
 
-    `climatology_id` restricts to observations scored against one baseline. An
-    observation only means anything relative to the climatology it was scored
-    against, so mixing runs on one page would put readings from a four-day
-    baseline beside readings from a fortnight's and call them comparable.
+    The publisher reads by time and then `rescore`s what it loads against
+    the newest climatology, so every window on a page is compared with one
+    baseline. `climatology_id` instead restricts to observations *sealed*
+    against one baseline, which is a question about the archive, not about
+    current conditions.
     """
     import json
 

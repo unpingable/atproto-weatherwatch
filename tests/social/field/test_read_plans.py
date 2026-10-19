@@ -1,7 +1,8 @@
 """The publisher's two reads of the field archive must not scan or sort it.
 
 Every publish asks for the newest climatology and then for the newest 20,000
-observations scored against it. On the deployed store (15,526 climatology
+observations within its fitted range (by time; before 2026-10-19 by the
+climatology they were sealed against). On the deployed store (15,526 climatology
 documents of ~30 KB, 421,295 observations of ~2.9 KB) the first was a full
 table scan plus a temp B-tree -- roughly 470 MB of pages read to return one
 row -- and the second pushed every matching ~3 KB document through a sort.
@@ -59,3 +60,25 @@ def test_the_readers_still_return_the_newest_rows(tmp_path):
     docs, total = fobs.load_observations(conn, climatology_id="c1", limit=5)
     assert total == 15
     assert [d["i"] for d in docs] == [21, 23, 25, 27, 29]
+
+
+def test_observations_by_time_come_back_in_index_order(tmp_path):
+    conn = _conn(tmp_path)
+    plan = _plan(conn, "SELECT document FROM weather_observation "
+                       "WHERE ts_end >= ? ORDER BY ts_start DESC LIMIT ?",
+                 ("2026-01-01T00:00:00Z", 20_000))
+    assert not any("TEMP B-TREE" in step for step in plan), plan
+    assert any("INDEX" in step for step in plan), plan
+
+
+def test_the_time_reader_returns_the_newest_rows_in_range(tmp_path):
+    conn = _conn(tmp_path)
+    for i in range(30):
+        conn.execute(
+            "INSERT INTO weather_observation VALUES (?,?,?,?,?,?,?,?,?,?)",
+            (f"o{i}", f"2026-01-01T00:{i:02d}:00Z", f"2026-01-01T00:{i:02d}:59Z",
+             "60s", "thin", 1.0, 1, "c0", f'{{"i": {i}}}', "s"))
+    docs, total = fobs.load_observations(conn, since="2026-01-01T00:10:00Z",
+                                         limit=5)
+    assert total == 20
+    assert [d["i"] for d in docs] == [25, 26, 27, 28, 29]

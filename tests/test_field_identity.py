@@ -296,7 +296,8 @@ def test_sealing_memory_does_not_scale_with_the_range(sealed, tmp_path):
     """Measured on a synthetic 30-day minute store: sealing 43,205 windows
     built every document and then read every stored one back before writing
     any, holding two copies of the range at once. Both are per-batch now, so
-    tripling the range must not triple the peak."""
+    tripling the range must not triple the peak. The second seal here is a
+    re-score of stored windows, which writes nothing (§8, 2026-10-19)."""
     import tracemalloc
 
     _p, _clim, base, _c = _build(sealed, hours=192)
@@ -313,7 +314,7 @@ def test_sealing_memory_does_not_scale_with_the_range(sealed, tmp_path):
         _cur, peak = tracemalloc.get_traced_memory()
         tracemalloc.stop()
         conn.close()
-        assert result == {"considered": n, "written": n, "unchanged": 0}
+        assert result == {"considered": n, "written": 0, "unchanged": n}
         return peak
 
     small, large = peak_for(2_000), peak_for(6_000)
@@ -329,9 +330,13 @@ def dataclasses_replace_provenance(o):
         o, provenance={**o.provenance, "climatology_id": "newer"})
 
 
-def test_batched_sealing_writes_exactly_what_changed(sealed, tmp_path):
-    _p, clim, obs, _c = _build(sealed, hours=192)
-    obs = _many(obs, 1_234)
+def test_batched_sealing_writes_each_observation_once(sealed, tmp_path):
+    """An observation is stored once, with the evidence it was sealed with.
+    Re-scoring a stored window against a newer baseline (the every-run
+    reseal shape) writes nothing and leaves the stored document as sealed;
+    only new windows are written."""
+    _p, clim, base, _c = _build(sealed, hours=192)
+    obs = _many(base, 1_234)
     conn = social_store.connect(tmp_path / "social.sqlite")
     social_store.init_db(conn)
     fobs.init(conn)
@@ -340,11 +345,84 @@ def test_batched_sealing_writes_exactly_what_changed(sealed, tmp_path):
     mixed = [dataclasses_replace_provenance(o) if i % 3 == 0 else o
              for i, o in enumerate(obs)]
     assert fobs.save_observations(conn, mixed, "t2") == {
-        "considered": 1_234, "written": 412, "unchanged": 822}
-    stored = dict(conn.execute(
-        "SELECT observation_id, document FROM weather_observation"))
+        "considered": 1_234, "written": 0, "unchanged": 1_234}
+    stored = {r[0]: (r[1], r[2]) for r in conn.execute(
+        "SELECT observation_id, document, sealed_at FROM weather_observation")}
     from weatherwatch.social.envelope import stable_json
-    assert stored == {o.observation_id: stable_json(o.as_dict()) for o in mixed}
+    assert stored == {o.observation_id: (stable_json(o.as_dict()), "t")
+                      for o in obs}
+    arrivals = _many(base, 1_240)[1_234:]
+    assert fobs.save_observations(conn, mixed + arrivals, "t3") == {
+        "considered": 1_240, "written": 6, "unchanged": 1_234}
+
+
+# --- 4. the archive is stored once; the page is scored at read -------------
+
+def test_a_moved_baseline_rewrites_nothing_and_the_reader_rescores(
+        sealed, tmp_path):
+    """The 2026-10-19 shape: a run that advances by a day refits the
+    climatology, so its id moves. The archive must not be rewritten; the
+    reader must still compare every window with the newest baseline."""
+    conn = social_store.connect(tmp_path / "social.sqlite")
+    social_store.init_db(conn)
+    fobs.init(conn)
+    _p, clim_a, obs_a, _c = _build(sealed, hours=192)
+    fobs.save_climatology(conn, clim_a, "t1")
+    assert fobs.save_observations(conn, obs_a, "t1")["written"] == len(obs_a)
+    _p, clim_b, obs_b, _c = _build(sealed, hours=216)
+    assert clim_b.climatology_id != clim_a.climatology_id, (
+        "fixture must move the baseline")
+    fobs.save_climatology(conn, clim_b, "t2")
+    assert fobs.save_observations(conn, obs_b, "t2") == {
+        "considered": len(obs_b), "written": 24, "unchanged": len(obs_a)}
+
+    # Stored documents carry the baseline they were sealed with.
+    sealed_under = dict(conn.execute(
+        "SELECT observation_id, climatology_id FROM weather_observation"))
+    assert all(sealed_under[o.observation_id] == clim_a.climatology_id
+               for o in obs_a)
+
+    # The reader selects by time and re-scores against the newest baseline:
+    # identical to what sealing the same windows under it would have said.
+    newest = fobs.load_climatology(conn)
+    assert newest["climatology_id"] == clim_b.climatology_id
+    docs, total = fobs.load_observations(conn, since=clim_b.ts_start)
+    assert total == len(obs_b)
+    rescored = fobs.rescore(docs, newest)
+    expected = {o.observation_id: o.as_dict() for o in obs_b}
+    assert {d["observation_id"]: d for d in rescored} == expected
+    for d in rescored:
+        assert frun.replay_observation(d) == d["observation_id"]
+    # ... and the stored rows are untouched by reading.
+    assert dict(conn.execute(
+        "SELECT observation_id, climatology_id FROM weather_observation"
+    )) == sealed_under
+    conn.close()
+
+
+def test_rescore_touches_only_the_evidence_identity_excludes(sealed):
+    """What `rescore` may change is exactly what `identity_document` drops,
+    so a re-scored document never forks its address. Scoring with no
+    climatology yields the unconditioned evidence, as `observe` does."""
+    _p, clim_a, obs, _c = _build(sealed, hours=192)
+    _p, clim_b, _obs, _c = _build(sealed, hours=216)
+    docs = [o.as_dict() for o in obs[:5]]
+    changed_keys = set()
+    for before, after in zip(docs, fobs.rescore(docs, clim_b.as_dict())):
+        assert after["observation_id"] == before["observation_id"]
+        changed_keys |= {f"confidence.{k}" for k in after["confidence"]
+                         if after["confidence"][k] != before["confidence"][k]}
+        changed_keys |= {f"provenance.{k}" for k in after["provenance"]
+                         if after["provenance"][k] != before["provenance"].get(k)}
+        assert after["provenance"]["climatology_id"] == clim_b.climatology_id
+        assert fobs.identity_document(after) == fobs.identity_document(before)
+    allowed = ({f"confidence.{k}" for k in fobs.CONFIDENCE_EVIDENCE_KEYS}
+               | {f"provenance.{k}" for k in fobs.PROVENANCE_EVIDENCE_KEYS})
+    assert changed_keys and changed_keys <= allowed, changed_keys
+    for before, after in zip(docs, fobs.rescore(docs, None)):
+        assert after["confidence"]["support"] == clim_mod.UNSUPPORTED
+        assert after["confidence"]["baseline_days"] == 0
+        assert fobs.identity_document(after) == fobs.identity_document(before)
 
 
 def test_series_points_share_their_repeated_values(sealed):

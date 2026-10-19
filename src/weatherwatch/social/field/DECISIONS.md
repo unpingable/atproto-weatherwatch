@@ -350,12 +350,12 @@ nearly always on the file, that is how the WAL reached 1.64 GB. Every job now
 checkpoints on close (`social/store.py::close`), which bounds the file; it does
 not reduce the ~215 MB written per run.
 
-**Why "write only new ids" is not simply switched on.** The publisher reads
+**Why "write only new ids" was not simply switched on.** The publisher read
 `load_observations(climatology_id=<newest>)`. Under the prototype the newest
 baseline has only the windows that arrived under it, so the report read 5
 documents instead of 20,000 -- the page would lose its history and persistence.
-Making a run cost its arrivals needs one of these, each of which changes what
-a stored document or the read contract says, so it is an owner decision:
+Making a run cost its arrivals needed one of these, each of which changes what
+a stored document or the read contract says, so it was an owner decision:
 
 1. **Evidence at read time.** Store each observation once with the evidence it
    was sealed with; the reader selects by time, not by `climatology_id`, and
@@ -366,6 +366,36 @@ a stored document or the read contract says, so it is an owner decision:
    whole hour, so its id changes at most hourly; runs in between write only
    arrivals and one run an hour rewrites the range. The baseline then lags by
    up to an hour of a 30-day fit.
+
+### Decision 2026-10-19: store once, derive at read (option 1)
+
+**Owner decision: observations are stored once; the climatology is
+separately versioned derived state.** Recomputing a baseline must not require
+rewriting a month of observations -- that is the wrong dependency direction.
+Option 2 was judged a reasonable throttle that leaves the data model wrong.
+
+What this means in code:
+
+- `save_observations` inserts an observation whose id is not yet stored and
+  never touches an existing row. `written` is the number of windows that
+  arrived; `written == considered` over an unchanged range still means the
+  archive is forking.
+- A stored document records the baseline it was *sealed* against
+  (`provenance.climatology_id` and the `CONFIDENCE_EVIDENCE_KEYS`). That is
+  the archive, and it is replayable as before.
+- The readers (`report._load_field`, `social field --output`) load by time
+  over the newest climatology's fitted range and call `rescore`, which
+  re-derives exactly the evidence keys identity already excludes, from the
+  newest climatology, through the same `_baseline_evidence` the sealer uses.
+  The rendered page is what it was: every window on it is compared with one
+  current baseline.
+- `climatology_id` on `load_observations` remains as a question about the
+  archive ("what was sealed against this baseline"), not about conditions.
+
+Cost of a run after this change: the climatology row (one ~30 KB document, a
+new id on most runs) plus one row per window that arrived. The
+`weather_climatology` table keeps growing by one row per refit; that is
+retention policy and belongs to whoever owns storage policy.
 
 ### Legacy rows
 

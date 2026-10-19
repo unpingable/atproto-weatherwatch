@@ -249,11 +249,12 @@ def _seal_field(args, econn, points, clim, obs, cands) -> int:
     cands_summary = candidate_summary(points, clim, cands)
     out["candidates"] = cands_summary
     if args.output or args.station_output:
-        # Scoped to this run's climatology: an observation is only meaningful
-        # against the baseline it was scored with.
-        docs, total_obs = fobs.load_observations(
-            econn, climatology_id=clim.climatology_id)
+        # By time over this run's fitted range, then re-scored against this
+        # run's climatology: the archive is stored once, the page is scored
+        # against the current baseline (DECISIONS.md §8).
         cdoc = fobs.load_climatology(econn, clim.climatology_id)
+        docs, total_obs = fobs.load_observations(econn, since=clim.ts_start)
+        docs = fobs.rescore(docs, cdoc)
         from .field.conditions import assess, criteria_table
         # `now` lets the instrument distinguish "the network went quiet" from
         # "the station stopped reporting" -- identical readings, opposite

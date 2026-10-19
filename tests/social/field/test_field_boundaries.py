@@ -310,9 +310,12 @@ def test_station_discloses_when_the_archive_is_larger_than_the_page(built):
     assert "older not drawn" in html
 
 
-def test_observations_load_scoped_to_their_own_climatology(built, tmp_path):
-    """Readings scored against a four-day baseline are not comparable with
-    readings scored against a fortnight's, so a page shows one baseline."""
+def test_observations_are_stored_once_and_scoped_reads_see_the_seal(built, tmp_path):
+    """An observation is stored once, with the baseline it was sealed with
+    (DECISIONS.md §8, 2026-10-19). Re-sealing the same windows against a
+    different baseline writes nothing; `climatology_id` on the reader is a
+    question about the archive (what was sealed against this baseline), and
+    the page is scored at read time by `rescore` instead."""
     from weatherwatch.social import store
 
     _, clim, obs, _ = built
@@ -327,13 +330,15 @@ def test_observations_load_scoped_to_their_own_climatology(built, tmp_path):
                             "provenance": {**o.provenance,
                                            "climatology_id": "deadbeef"}})
              for o in obs[:5]]
-    obs_mod.save_observations(conn, other, "t")
+    assert obs_mod.save_observations(conn, other, "t2") == {
+        "considered": 5, "written": 0, "unchanged": 5}
 
     scoped, total = obs_mod.load_observations(
         conn, climatology_id=clim.climatology_id)
     assert all(d["provenance"]["climatology_id"] == clim.climatology_id
                for d in scoped)
-    assert total == len(scoped)
+    assert total == len(scoped) == len(obs)
+    assert obs_mod.load_observations(conn, climatology_id="deadbeef")[1] == 0
     everything, _ = obs_mod.load_observations(conn)
-    assert len(everything) > len(scoped)
+    assert len(everything) == len(scoped)
     conn.close()
