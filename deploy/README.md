@@ -38,7 +38,9 @@ configuration.
 
 - `deploy/systemd/weatherwatch-collector.service` supervises collection.
 - `deploy/systemd/weatherwatch-field.service` seals social-weather field
-  observations; `.timer` runs it hourly. It retains nothing new — the field is
+  observations; `.timer` runs it every six minutes, the longest cadence that
+  keeps the published 15-minute freshness rule true with one missed run of
+  margin (field/DECISIONS.md section 8). It retains nothing new — the field is
   derived from the identity-free minute counters the collector already writes
   — and it renders no page. **Without it the published page reports
   `Station offline`**, correctly and permanently, because the conditions block
@@ -46,8 +48,13 @@ configuration.
 - `deploy/systemd/weatherwatch-publish.service` renders and publishes once.
   It must be given `WW_SOCIAL_DB`; unset, both the social section and the
   conditions block degrade to unavailable.
-- `deploy/systemd/weatherwatch-publish.timer` runs the publisher every five
-  minutes.
+- `deploy/systemd/weatherwatch-publish.timer` runs the publisher 15 minutes
+  after the previous run finished (`OnUnitInactiveSec`), so a slow render can
+  never stack into the next one.
+- Every oneshot carries `MemoryHigh` (1536M publish, 1G field and detect;
+  throttled, never killed), `TimeoutStartSec`, `Nice=10` and
+  `IOSchedulingClass=idle`. Every job that opens `social.sqlite` checkpoints
+  its WAL on close (`social/store.py::close`).
 - `deploy/publish.sh` implements local or explicit remote publication.
 - `weatherwatch publication-gate` is the shared deterministic candidate gate
   used by both `publish.sh` and `weatherwatch status`. Passing means only that
@@ -196,7 +203,10 @@ needed to detect the silent connection.
 
 The public report places its observation interval, newest complete observation,
 and freshness state near the top. Freshness uses an explicit provisional
-budget of two five-minute publish intervals plus one source bucket. `partial`,
+budget of two five-minute publish intervals plus one source bucket, measured
+at render time; the deployed publisher now runs about every fifteen minutes,
+so this states how current the stream was when the page was rendered, not how
+old a visitor's copy may be. `partial`,
 `stale`, and `unavailable` are distinct; unavailable never means calm.
 
 To stop publication or collection, disable the corresponding timer/service in

@@ -72,10 +72,13 @@ REPORT_MAX_WINDOWS = 200_000
 #: on the page rather than silently dropped.
 MIN_RATIO_DENOMINATOR = 30
 
-#: The deployed publisher runs every five minutes. Freshness is considered
-#: current for two missed publication intervals plus one source bucket. This
-#: is an operational, explicitly provisional threshold, not a statement about
-#: event statistics or relay completeness.
+#: Freshness is considered current for two missed publication intervals plus
+#: one source bucket. This is an operational, explicitly provisional
+#: threshold, not a statement about event statistics or relay completeness.
+#: The publisher ran every five minutes when this was set; since 2026-10-19 it
+#: runs fifteen minutes after the previous run finished. The value is left at
+#: five minutes deliberately: age is measured at render time, and changing it
+#: would change what the published page calls `current`.
 PUBLICATION_INTERVAL_S = 5 * 60
 
 # --- what to show ----------------------------------------------------------
@@ -1855,7 +1858,7 @@ def _load_conditions(social_db, generated_at: str) -> tuple[dict, list, dict]:
 
     The report does not *compute* the field. Sealing one content-addressed
     observation per window over a fortnight of minute windows is seconds of
-    work, and the publisher runs every five minutes; the archive exists so
+    work, and the publisher runs every fifteen minutes; the archive exists so
     that the page can be a reader of it. `weatherwatch social field` is the
     writer, on its own timer.
 

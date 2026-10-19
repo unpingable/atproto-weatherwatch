@@ -208,7 +208,7 @@ Three properties make this a presentation change rather than a semantic one:
   would otherwise drift is the same failure `criteria_table()` was introduced
   to stop, one level up.
 - **The report reads, it does not compute.** Sealing a fortnight of minute
-  windows is seconds of work and the publisher runs every five minutes, so the
+  windows is seconds of work and the publisher runs every fifteen minutes, so the
   report loads sealed observations from the store. `weatherwatch social field`
   is the writer, on its own timer (`weatherwatch-field.timer`). No new
   retention: the field is derived from counters that already exist.
@@ -310,18 +310,62 @@ an observation was sealed, not when it was last re-confirmed.
 than 15 minutes is reported as `station_offline` — correctly, because that is
 what the published criteria table says.
 
-The sealer ran **hourly**, so the public page truthfully reported the station
+The sealer once ran **hourly**, so the public page truthfully reported the station
 offline for roughly 45 minutes in every 60. The rule was right and the cadence
 was wrong. **The producer is aligned to the declared semantics rather than
-freshness being redefined around a cron entry**: the timer now runs every 5
-minutes, giving a worst-case reading age of about 5.5 minutes against a
-15-minute budget, so two consecutive runs can fail before a reader is told the
-station is offline. `tests/test_report.py` pins that relationship so neither
-side can drift away from the other.
+freshness being redefined around a cron entry**. The timer ran every 5
+minutes and, since 2026-10-19, every **6**: the longest whole-hour divisor for
+which `period * 2 < 15 min`, giving a worst-case reading age of about 7.5
+minutes, so one run can fail before a reader is told the station is offline.
+`tests/test_report.py` pins that relationship so neither side can drift away
+from the other. The 15-minute cadence used as host containment on 2026-10-19
+does not satisfy it: every cycle's last minute or more would publish
+`station_offline` with nothing wrong.
 
-This is affordable only because sealing became idempotent: a steady-state run
-adds no rows and no bytes, and costs about 21 s, almost all of it re-fitting
-the climatology and reading existing documents back to compare.
+### What a run actually costs (2026-10-19)
+
+The claim that used to stand here -- "a steady-state run adds no rows and no
+bytes" -- is true only for a reseal over an *unchanged* range. A real run
+always advances by the windows that arrived, the refit moves the climatology's
+percentiles, and so `climatology_id` changes on essentially every run (the
+deployed store held 15,526 climatology rows). `observe()` stamps that id and
+the other baseline evidence into every document, so every observation in the
+30-day range compares unequal and is rewritten. Identity is untouched -- the
+ids are stable, which is why row counts never grew -- but the bytes are not.
+
+Measured on a synthetic store matching the deployed one (632,352 pages vs
+630,383; edge_event 376,806, status_event 30,320, sink_health 46,765, episode
+64,631, weather_observation 421,295, weather_climatology 15,526), with a
+reader holding a snapshot so the log could not reset mid-run:
+
+| run | rows written | WAL frames appended |
+|---|---|---|
+| reseal, unchanged range | 0 | 11-14 |
+| advance 5 windows (as deployed) | 43,210-43,220 | 52,470-52,644 (~215 MB) |
+| advance 5 windows, writing only new ids (prototype, not adopted) | 5 | 25-32 |
+
+The deployed host saw the same: 205,328,472 bytes of WAL after one run
+following a truncation. With nothing checkpointing explicitly and a reader
+nearly always on the file, that is how the WAL reached 1.64 GB. Every job now
+checkpoints on close (`social/store.py::close`), which bounds the file; it does
+not reduce the ~215 MB written per run.
+
+**Why "write only new ids" is not simply switched on.** The publisher reads
+`load_observations(climatology_id=<newest>)`. Under the prototype the newest
+baseline has only the windows that arrived under it, so the report read 5
+documents instead of 20,000 -- the page would lose its history and persistence.
+Making a run cost its arrivals needs one of these, each of which changes what
+a stored document or the read contract says, so it is an owner decision:
+
+1. **Evidence at read time.** Store each observation once with the evidence it
+   was sealed with; the reader selects by time, not by `climatology_id`, and
+   re-derives baseline evidence from the newest climatology when it renders.
+   Stored documents then record their seal-time baseline (arguably the more
+   honest archive); the rendered page can be kept identical.
+2. **Refit on a coarser boundary.** Fit the climatology only through the last
+   whole hour, so its id changes at most hourly; runs in between write only
+   arrivals and one run an hour rewrites the range. The baseline then lags by
+   up to an hour of a 30-day fit.
 
 ### Legacy rows
 

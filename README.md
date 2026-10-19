@@ -57,7 +57,7 @@ and it never follows a person.
 ## What you can see
 
 The dashboard at <https://weatherwatch.neutral.zone/> is a static page,
-regenerated on a five-minute cadence from the local database:
+regenerated about every fifteen minutes from the local database:
 
 - **Current conditions** — a headline state (`Calm`, `Active`, `Turbulent`,
   `Storm`, …) built the way a weather warning is built: published criteria
