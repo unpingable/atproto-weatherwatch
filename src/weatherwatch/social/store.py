@@ -213,9 +213,11 @@ def checkpoint(
     """
     out = {"mode": "skipped", "busy": None, "log_frames": None,
            "checkpointed_frames": None, "truncated": False}
-    if conn.in_transaction:
-        return out
     try:
+        # Inside the try: on a closed connection even `in_transaction`
+        # raises ProgrammingError, and this function promises not to.
+        if conn.in_transaction:
+            return out
         previous = conn.execute("PRAGMA busy_timeout").fetchone()[0]
     except sqlite3.Error:
         out["mode"] = "failed"

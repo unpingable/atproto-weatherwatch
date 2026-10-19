@@ -267,6 +267,12 @@ def test_a_passive_only_checkpoint_does_not_truncate(tmp_path):
         peer.close()
 
 
+def test_closing_twice_does_not_raise(tmp_path):
+    conn = store.connect(tmp_path / "social.sqlite")
+    store.close(conn)
+    assert store.close(conn)["mode"] == "failed"
+
+
 def test_the_report_reader_releases_and_truncates(tmp_path):
     from weatherwatch import report
 
