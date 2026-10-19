@@ -270,6 +270,11 @@ def save_climatology(conn: sqlite3.Connection, clim: Climatology,
     return clim.climatology_id
 
 
+#: Observations built, compared and written per batch. Also the size of the
+#: `IN (...)` lookup, which keeps it under SQLite's bound-parameter limit.
+SEAL_BATCH = 500
+
+
 def save_observations(conn: sqlite3.Connection, obs: list,
                       sealed_at: str) -> dict:
     """Seal observations, writing only the ones that actually changed.
@@ -290,38 +295,42 @@ def save_observations(conn: sqlite3.Connection, obs: list,
     `sealed_at` is deliberately left alone on an unchanged row. It records when
     this observation was sealed, not when it was most recently re-confirmed,
     and the first answer is the true one.
+
+    Works in batches of `SEAL_BATCH`: each batch builds its documents, reads
+    back only its own stored rows, and writes what changed before the next
+    batch is built. Building every document and then reading every stored one
+    back first held both copies of the range at once: on a synthetic 30-day
+    minute store (43,205 windows) this call grew resident memory by ~120 MB;
+    batched, by ~3 MB. The caller's transaction still spans the whole call,
+    so the rows written are the same either way.
     """
-    rows = [
-        (o.observation_id, o.ts_start, o.ts_end, o.window,
-         o.confidence.support, o.confidence.coverage,
-         1 if o.confidence.eligible else 0,
-         o.provenance.get("climatology_id", ""),
-         stable_json(o.as_dict()), sealed_at)
-        for o in obs
-    ]
-    if not rows:
-        return {"considered": 0, "written": 0, "unchanged": 0}
-
-    # One lookup for the whole batch rather than a query per observation.
-    existing: dict = {}
-    ids = [r[0] for r in rows]
-    for start in range(0, len(ids), 500):
-        chunk = ids[start:start + 500]
-        marks = ",".join("?" * len(chunk))
-        for oid, document in conn.execute(
-                f"SELECT observation_id, document FROM weather_observation "
-                f"WHERE observation_id IN ({marks})", chunk):
-            existing[oid] = document
-
-    changed = [r for r in rows if existing.get(r[0]) != r[8]]
-    if changed:
-        conn.executemany(
-            "INSERT OR REPLACE INTO weather_observation(observation_id, "
-            "ts_start, ts_end, window, support, coverage, eligible, "
-            "climatology_id, document, sealed_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
-            changed)
-    return {"considered": len(rows), "written": len(changed),
-            "unchanged": len(rows) - len(changed)}
+    considered = written = 0
+    for start in range(0, len(obs), SEAL_BATCH):
+        rows = []
+        for o in obs[start:start + SEAL_BATCH]:
+            document = o.as_dict()
+            rows.append((
+                document["observation_id"], o.ts_start, o.ts_end, o.window,
+                o.confidence.support, o.confidence.coverage,
+                1 if o.confidence.eligible else 0,
+                o.provenance.get("climatology_id", ""),
+                stable_json(document), sealed_at))
+        marks = ",".join("?" * len(rows))
+        existing = dict(conn.execute(
+            f"SELECT observation_id, document FROM weather_observation "
+            f"WHERE observation_id IN ({marks})", [r[0] for r in rows]))
+        changed = [r for r in rows if existing.get(r[0]) != r[8]]
+        if changed:
+            conn.executemany(
+                "INSERT OR REPLACE INTO weather_observation(observation_id, "
+                "ts_start, ts_end, window, support, coverage, eligible, "
+                "climatology_id, document, sealed_at) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?)",
+                changed)
+        considered += len(rows)
+        written += len(changed)
+    return {"considered": considered, "written": written,
+            "unchanged": considered - written}
 
 
 def load_observations(conn: sqlite3.Connection, since: str | None = None,

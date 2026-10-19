@@ -274,3 +274,74 @@ def test_timestamps_are_no_finer_than_before(sealed):
     for o in obs[:50]:
         assert o.ts_start.endswith("Z") or "+00:00" in o.ts_start
         assert "." not in o.ts_start, "sub-second precision appeared"
+
+
+# --- 5. sealing memory is bounded by a batch, not by the range -------------
+
+def _many(observations, n):
+    """`n` distinct observations, by sliding real ones along the clock."""
+    import dataclasses
+    from weatherwatch import timeutil
+
+    out = []
+    for i in range(n):
+        o = observations[i % len(observations)]
+        start = timeutil.to_epoch(o.ts_start) + (i // len(observations)) * 10**7
+        out.append(dataclasses.replace(
+            o, ts_start=timeutil.us_to_iso(int(start * 1_000_000))))
+    return out
+
+
+def test_sealing_memory_does_not_scale_with_the_range(sealed, tmp_path):
+    """Measured on a synthetic 30-day minute store: sealing 43,205 windows
+    built every document and then read every stored one back before writing
+    any, holding two copies of the range at once. Both are per-batch now, so
+    tripling the range must not triple the peak."""
+    import tracemalloc
+
+    _p, _clim, base, _c = _build(sealed, hours=192)
+
+    def peak_for(n):
+        obs = _many(base, n)
+        conn = social_store.connect(tmp_path / f"social-{n}.sqlite")
+        social_store.init_db(conn)
+        fobs.init(conn)
+        fobs.save_observations(conn, obs, "t")
+        rescored = [dataclasses_replace_provenance(o) for o in obs]
+        tracemalloc.start()
+        result = fobs.save_observations(conn, rescored, "t2")
+        _cur, peak = tracemalloc.get_traced_memory()
+        tracemalloc.stop()
+        conn.close()
+        assert result == {"considered": n, "written": n, "unchanged": 0}
+        return peak
+
+    small, large = peak_for(2_000), peak_for(6_000)
+    assert large < 1.5 * small, (
+        f"peak grew with the range: {small} bytes at 2,000 windows, "
+        f"{large} at 6,000")
+
+
+def dataclasses_replace_provenance(o):
+    """Same observation, newer baseline evidence: the every-run reseal shape."""
+    import dataclasses
+    return dataclasses.replace(
+        o, provenance={**o.provenance, "climatology_id": "newer"})
+
+
+def test_batched_sealing_writes_exactly_what_changed(sealed, tmp_path):
+    _p, clim, obs, _c = _build(sealed, hours=192)
+    obs = _many(obs, 1_234)
+    conn = social_store.connect(tmp_path / "social.sqlite")
+    social_store.init_db(conn)
+    fobs.init(conn)
+    assert fobs.save_observations(conn, obs, "t") == {
+        "considered": 1_234, "written": 1_234, "unchanged": 0}
+    mixed = [dataclasses_replace_provenance(o) if i % 3 == 0 else o
+             for i, o in enumerate(obs)]
+    assert fobs.save_observations(conn, mixed, "t2") == {
+        "considered": 1_234, "written": 412, "unchanged": 822}
+    stored = dict(conn.execute(
+        "SELECT observation_id, document FROM weather_observation"))
+    from weatherwatch.social.envelope import stable_json
+    assert stored == {o.observation_id: stable_json(o.as_dict()) for o in mixed}
