@@ -289,7 +289,12 @@ def _climatology_document(clim: Climatology) -> dict:
     """
     cached = clim.__dict__.get("_document")
     if cached is None:
-        cached = clim.as_dict()
+        # Through the same canonical JSON the store keeps and the reader
+        # loads back, so sealer and reader derive evidence from identically
+        # rounded numbers (`n_eff` is rounded by `stable_json` before the
+        # two-decimal rounding here; a raw value could differ at a .005 edge).
+        import json
+        cached = json.loads(stable_json(clim.as_dict()))
         clim.__dict__["_document"] = cached
     return cached
 
@@ -399,14 +404,15 @@ def save_observations(conn: sqlite3.Connection, obs: list,
                 o.provenance.get("climatology_id", ""),
                 stable_json(document), sealed_at))
         if rows:
-            conn.executemany(
-                "INSERT INTO weather_observation(observation_id, "
+            # OR IGNORE: a duplicate id inside one batch (the same window
+            # built twice) is not an error and must not roll back the seal.
+            written += conn.executemany(
+                "INSERT OR IGNORE INTO weather_observation(observation_id, "
                 "ts_start, ts_end, window, support, coverage, eligible, "
                 "climatology_id, document, sealed_at) "
                 "VALUES(?,?,?,?,?,?,?,?,?,?)",
-                rows)
+                rows).rowcount
         considered += len(batch)
-        written += len(rows)
     return {"considered": considered, "written": written,
             "unchanged": considered - written}
 
@@ -428,9 +434,16 @@ def load_observations(conn: sqlite3.Connection, since: str | None = None,
 
     The publisher reads by time and then `rescore`s what it loads against
     the newest climatology, so every window on a page is compared with one
-    baseline. `climatology_id` instead restricts to observations *sealed*
-    against one baseline, which is a question about the archive, not about
-    current conditions.
+    baseline. `since`/`until` bound `ts_start`, the indexed column (bounding
+    `ts_end` scanned the whole table for the count: ~1.2 GB of documents per
+    publish on the deployed store), and they accept either timestamp
+    spelling (`Z` or `+00:00`). A window that was re-observed differently
+    (a collector restart splitting a bucket, a manual run) has two stored
+    rows under two identities; the time read returns only the newest row
+    per window and counts windows, not rows, so the page cannot show a
+    window twice. `climatology_id` instead restricts to observations
+    *sealed* against one baseline, a question about the archive, not about
+    current conditions; it returns rows as stored.
     """
     import json
 
@@ -439,20 +452,49 @@ def load_observations(conn: sqlite3.Connection, since: str | None = None,
         clauses.append("climatology_id = ?")
         params.append(climatology_id)
     if since:
-        clauses.append("ts_end >= ?")
-        params.append(since)
+        clauses.append("ts_start >= ?")
+        params.append(_observation_time(since))
     if until:
         clauses.append("ts_start <= ?")
-        params.append(until)
+        params.append(_observation_time(until))
     where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
 
-    total = conn.execute(
-        f"SELECT COUNT(*) FROM weather_observation{where}", params).fetchone()[0]
-    rows = conn.execute(
-        f"SELECT document FROM weather_observation{where} "
-        "ORDER BY ts_start DESC LIMIT ?", params + [limit]).fetchall()
+    if climatology_id:
+        total = conn.execute(
+            f"SELECT COUNT(*) FROM weather_observation{where}",
+            params).fetchone()[0]
+        rows = conn.execute(
+            f"SELECT document FROM weather_observation{where} "
+            "ORDER BY ts_start DESC LIMIT ?", params + [limit]).fetchall()
+    else:
+        # Windows, not rows; answered from the ts_start index alone.
+        total = conn.execute(
+            f"SELECT COUNT(DISTINCT ts_start) FROM weather_observation{where}",
+            params).fetchone()[0]
+        # The newest stored row for each (window start, width): a later seal
+        # of the same window has a higher rowid, whatever its identity.
+        rows = conn.execute(
+            f"SELECT o.document FROM weather_observation AS o{where.replace('ts_start', 'o.ts_start')} "
+            f"{'AND' if where else 'WHERE'} o.rowid = (SELECT MAX(i.rowid) "
+            "FROM weather_observation AS i WHERE i.ts_start = o.ts_start "
+            "AND i.window = o.window) "
+            "ORDER BY o.ts_start DESC LIMIT ?", params + [limit]).fetchall()
     docs = [json.loads(r[0]) for r in reversed(rows)]
     return docs, total
+
+
+def _observation_time(iso: str) -> str:
+    """An ISO timestamp in the exact spelling `ts_start` is stored in.
+
+    Observations are stamped with `+00:00`, climatology extents with `Z`;
+    compared as strings, `+` sorts before `Z`, so a `Z` bound would drop the
+    window that starts exactly on it. Normalise rather than compare mixed
+    spellings; an unparsable bound is passed through unchanged.
+    """
+    epoch = timeutil.to_epoch(iso)
+    if epoch is None:
+        return iso
+    return timeutil.us_to_iso(int(round(epoch * 1_000_000)))
 
 
 def load_climatology(conn: sqlite3.Connection,

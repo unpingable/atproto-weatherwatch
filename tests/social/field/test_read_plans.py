@@ -54,21 +54,63 @@ def test_the_readers_still_return_the_newest_rows(tmp_path):
     for i in range(30):
         conn.execute(
             "INSERT INTO weather_observation VALUES (?,?,?,?,?,?,?,?,?,?)",
-            (f"o{i}", f"2026-01-01T00:{i:02d}:00Z", "e", "60s", "thin", 1.0,
-             1, "c1" if i % 2 else "c0", f'{{"i": {i}}}', "s"))
+            (f"o{i}", f"2026-01-01T00:{i:02d}:00+00:00", "e", "60s", "thin",
+             1.0, 1, "c1" if i % 2 else "c0", f'{{"i": {i}}}', "s"))
     assert fobs.load_climatology(conn)["climatology_id"] == "c1"
     docs, total = fobs.load_observations(conn, climatology_id="c1", limit=5)
     assert total == 15
     assert [d["i"] for d in docs] == [21, 23, 25, 27, 29]
 
 
+def _no_table_scan(plan):
+    return not any(step.startswith("SCAN weather_observation") and
+                   "INDEX" not in step for step in plan)
+
+
 def test_observations_by_time_come_back_in_index_order(tmp_path):
     conn = _conn(tmp_path)
-    plan = _plan(conn, "SELECT document FROM weather_observation "
-                       "WHERE ts_end >= ? ORDER BY ts_start DESC LIMIT ?",
-                 ("2026-01-01T00:00:00Z", 20_000))
+    plan = _plan(conn, "SELECT o.document FROM weather_observation AS o "
+                       "WHERE o.ts_start >= ? AND o.rowid = (SELECT MAX(i.rowid) "
+                       "FROM weather_observation AS i WHERE i.ts_start = o.ts_start "
+                       "AND i.window = o.window) ORDER BY o.ts_start DESC LIMIT ?",
+                 ("2026-01-01T00:00:00+00:00", 20_000))
     assert not any("TEMP B-TREE" in step for step in plan), plan
-    assert any("INDEX" in step for step in plan), plan
+    assert _no_table_scan(plan), plan
+    assert any("idx_obs_time" in step for step in plan), plan
+
+
+def test_the_window_count_by_time_is_answered_from_the_index(tmp_path):
+    """The review of 2026-10-19 caught `COUNT(*) WHERE ts_end >= ?`: a full
+    table scan over ~1.2 GB of documents on every publish. The count must
+    read the ts_start index and nothing else."""
+    conn = _conn(tmp_path)
+    plan = _plan(conn, "SELECT COUNT(DISTINCT ts_start) FROM weather_observation "
+                       "WHERE ts_start >= ?", ("2026-01-01T00:00:00+00:00",))
+    assert _no_table_scan(plan), plan
+    assert any("COVERING INDEX idx_obs_time" in step for step in plan), plan
+
+
+def test_a_window_stored_twice_is_read_once_newest_first(tmp_path):
+    """A window re-observed differently (a collector restart splitting its
+    bucket) has two rows under two identities. The time read returns the
+    newest row per window and counts windows; the archive read by
+    climatology_id still returns rows as stored."""
+    conn = _conn(tmp_path)
+    for i, (oid, clim, doc) in enumerate((("old", "c0", '{"v": "old"}'),
+                                          ("new", "c1", '{"v": "new"}'))):
+        conn.execute(
+            "INSERT INTO weather_observation VALUES (?,?,?,?,?,?,?,?,?,?)",
+            (oid, "2026-01-01T00:05:00+00:00", "2026-01-01T00:05:59+00:00",
+             "60s", "thin", 1.0 if i else 0.5, 1, clim, doc, f"s{i}"))
+    conn.execute(
+        "INSERT INTO weather_observation VALUES (?,?,?,?,?,?,?,?,?,?)",
+        ("other", "2026-01-01T00:06:00+00:00", "2026-01-01T00:06:59+00:00",
+         "60s", "thin", 1.0, 1, "c1", '{"v": "other"}', "s2"))
+    docs, total = fobs.load_observations(conn, since="2026-01-01T00:00:00Z")
+    assert total == 2
+    assert [d["v"] for d in docs] == ["new", "other"]
+    rows, total = fobs.load_observations(conn, climatology_id="c0")
+    assert total == 1 and rows[0]["v"] == "old"
 
 
 def test_the_time_reader_returns_the_newest_rows_in_range(tmp_path):
@@ -80,5 +122,5 @@ def test_the_time_reader_returns_the_newest_rows_in_range(tmp_path):
              "60s", "thin", 1.0, 1, "c0", f'{{"i": {i}}}', "s"))
     docs, total = fobs.load_observations(conn, since="2026-01-01T00:10:00Z",
                                          limit=5)
-    assert total == 20
+    assert total == 20, "a Z bound must not drop the window that starts on it"
     assert [d["i"] for d in docs] == [25, 26, 27, 28, 29]

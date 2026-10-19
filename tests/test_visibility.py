@@ -436,12 +436,27 @@ def test_social_store_is_observed_with_its_write_ahead_log(tmp_path):
     assert concern["state"] == "PRESENT", concern
     assert concern["facts"]["wal_bytes"] == wal_bytes
     assert concern["facts"]["page_count"] > 0
+    assert concern["facts"]["page_size"] in (4096, 8192, 16384, 32768, 65536,
+                                             1024, 2048, 512)
     assert concern["facts"]["freelist_pages"] is not None
 
     over = visibility._social_store_concern(social, NOW, wal_bound=wal_bytes - 1)
     assert over["state"] == "DEGRADED"
     assert "write-ahead log exceeds its bound" in over["summary"]
     reader.close()
+
+    # Side-effect free: with the reader gone and the writer closed, SQLite
+    # deletes -wal/-shm; the concern must not bring them back (a mode=ro open
+    # would), nor touch the file's mtime.
+    for suffix in ("-wal", "-shm"):
+        (tmp_path / f"social.sqlite{suffix}").unlink(missing_ok=True)
+    before = social.stat().st_mtime_ns
+    again = visibility._social_store_concern(social, NOW)
+    assert again["state"] == "PRESENT"
+    assert again["facts"]["wal_bytes"] == 0
+    assert not (tmp_path / "social.sqlite-wal").exists()
+    assert not (tmp_path / "social.sqlite-shm").exists()
+    assert social.stat().st_mtime_ns == before
 
     # The document carries it, beside the weather store, as a required
     # concern that defaults to social.sqlite next to --db.
@@ -451,7 +466,7 @@ def test_social_store_is_observed_with_its_write_ahead_log(tmp_path):
     assert indexed["weatherwatch.persistence.social-store"]["required"] is True
     assert indexed["weatherwatch.persistence.social-store"]["facts"]["path"] == str(social)
 
-    social.write_bytes(b"not sqlite")
+    social.write_bytes(b"not sqlite" * 20)
     broken = visibility._social_store_concern(social, NOW)
     assert broken["state"] == "DEGRADED"
-    assert broken["facts"]["error"] is not None
+    assert broken["facts"]["error"] == "NotSQLite"

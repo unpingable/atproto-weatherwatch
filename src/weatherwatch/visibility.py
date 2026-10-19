@@ -571,13 +571,18 @@ def _aggregate_concern(ctx: dict, common: dict) -> dict:
 
 def _social_store_concern(path: Path, now: dt.datetime,
                           wal_bound: int = SOCIAL_WAL_BOUND_BYTES) -> dict:
-    """Is the social observation store readable, and is its write-ahead log
-    within the bound every job's close enforces?
+    """Is the social observation store a readable SQLite file whose
+    write-ahead log is within the bound every job's close enforces?
 
-    Read-only facts only: file sizes from the filesystem and three pragmas
-    over a `mode=ro` connection. It never checkpoints, never writes, and
-    never creates the store. The store is optional at a checkout (ABSENT);
-    once it exists its log is either bounded (PRESENT) or not (DEGRADED).
+    Side-effect free by construction: file sizes from the filesystem and the
+    100-byte SQLite header read with plain file I/O. It does not open the
+    database through SQLite at all, because even a `mode=ro` open of a
+    WAL-mode store creates `-wal`/`-shm` files when they are absent (the
+    normal state between jobs) and, from another account, can leave a
+    `-shm` the writer cannot use. The header's page count and freelist count
+    lag the last checkpoint in WAL mode; the file sizes are exact. The store
+    is optional at a checkout (ABSENT); once it exists its log is either
+    bounded (PRESENT) or not (DEGRADED).
     """
     wal_path = Path(f"{path}-wal")
     facts: dict[str, Any] = {
@@ -595,36 +600,45 @@ def _social_store_concern(path: Path, now: dt.datetime,
         facts["bytes"] = path.stat().st_size
         facts["wal_bytes"] = (wal_path.stat().st_size
                               if wal_path.is_file() else 0)
+        with path.open("rb") as handle:
+            header = handle.read(100)
     except OSError as exc:
         facts["error"] = type(exc).__name__
         return _concern("weatherwatch.persistence.social-store", DEGRADED,
                         "social observation store could not be measured",
                         facts, observed_at)
-    try:
-        uri = f"file:{path.resolve().as_posix()}?mode=ro"
-        conn = sqlite3.connect(uri, uri=True, isolation_level=None)
-        try:
-            conn.execute("PRAGMA busy_timeout=250")
-            facts["page_count"] = conn.execute(
-                "PRAGMA page_count").fetchone()[0]
-            facts["page_size"] = conn.execute("PRAGMA page_size").fetchone()[0]
-            facts["freelist_pages"] = conn.execute(
-                "PRAGMA freelist_count").fetchone()[0]
-        finally:
-            conn.close()
-    except sqlite3.Error as exc:
-        facts["error"] = type(exc).__name__
+    parsed = _sqlite_header(header)
+    if parsed is None:
+        facts["error"] = "NotSQLite"
         return _concern("weatherwatch.persistence.social-store", DEGRADED,
-                        "social observation store could not be read",
-                        facts, observed_at)
+                        "social observation store is not a readable SQLite "
+                        "file", facts, observed_at)
+    facts.update(parsed)
     if facts["wal_bytes"] > wal_bound:
         return _concern(
             "weatherwatch.persistence.social-store", DEGRADED,
-            "social store write-ahead log exceeds its bound; a reader is "
-            "holding checkpoints off", facts, observed_at)
+            "social store write-ahead log exceeds its bound (a reader "
+            "holding checkpoints off, a crashed job, or a large write in "
+            "progress)", facts, observed_at)
     return _concern("weatherwatch.persistence.social-store", PRESENT,
-                    "social store is readable and its write-ahead log is "
-                    "bounded", facts, observed_at)
+                    "social store is a readable SQLite file and its "
+                    "write-ahead log is bounded", facts, observed_at)
+
+
+def _sqlite_header(header: bytes) -> dict | None:
+    """Page size, in-header page count and freelist count from the first
+    100 bytes of a database file (SQLite file format, section 1.3), or None
+    when the bytes are not a SQLite 3 database."""
+    if len(header) < 100 or header[:16] != b"SQLite format 3\x00":
+        return None
+    page_size = int.from_bytes(header[16:18], "big")
+    if page_size == 1:
+        page_size = 65536
+    return {
+        "page_size": page_size,
+        "page_count": int.from_bytes(header[28:32], "big"),
+        "freelist_pages": int.from_bytes(header[36:40], "big"),
+    }
 
 
 def _report_concerns(report_dir: Path, now: dt.datetime) -> list[dict]:
