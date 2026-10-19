@@ -35,6 +35,16 @@ Environment=WW_PUBLIC_URL=https://weatherwatch.neutral.zone/
 # swap. Not reimplemented here.
 ExecStart=/opt/weatherwatch/deploy/publish.sh
 
+# Bounded, measured 2026-10-19 on the deployed host: unbounded oneshots (render
+# 1.6 GB RSS in D state, field 800 MB) pushed it into swap and a 67 % I/O
+# stall. MemoryHigh throttles and reclaims rather than kills -- a MemoryMax
+# kill would turn host pressure into a half-done run. TimeoutStartSec ends a
+# run that is stuck rather than slow.
+# The publisher had no priority bound at all; it now yields like the others.
+MemoryHigh=1536M
+TimeoutStartSec=20min
+Nice=10
+IOSchedulingClass=idle
 ProtectSystem=strict
 ReadWritePaths=/var/lib/weatherwatch /var/www
 ProtectHome=true

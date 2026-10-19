@@ -1,10 +1,22 @@
 [Unit]
-Description=Weatherwatch - publish the static report every 5 minutes
+Description=Weatherwatch - publish the static report 15 minutes after the last run
 
 [Timer]
 Unit=weatherwatch-publish.service
+# Fifteen minutes after the previous run FINISHED. `OnUnitActiveSec=5min`
+# counted from activation, so once a render took longer than five minutes
+# under host pressure (mean 608 s on 2026-10-19) the publisher was due again
+# the moment it finished and never idled. `OnUnitInactiveSec` cannot stack.
+#
+# The page's freshness is computed at render time against the collector's
+# newest window, so the publish interval changes how old a visitor's copy can
+# get, not what the page says about the stream when it was rendered.
+#
+# OnActiveSec re-seeds the chain whenever the timer itself is (re)started; on a
+# long-uptime host OnBootSec alone is long past (see the field timer).
 OnBootSec=2min
-OnUnitActiveSec=5min
+OnActiveSec=2min
+OnUnitInactiveSec=15min
 AccuracySec=30s
 # No Persistent=: a publication missed while the machine was down is not a
 # data-loss event. The report is regenerated from the database, so one run

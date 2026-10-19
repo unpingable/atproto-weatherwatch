@@ -933,10 +933,22 @@ def test_the_field_cadence_satisfies_the_freshness_rule_it_publishes():
         f"no margin: one missed run at {period_s}s crosses {budget_s}s")
 
 
-def test_timer_publishes_every_five_minutes_without_catchup():
+def test_publish_timer_cannot_stack_and_survives_a_restart():
+    """Fifteen minutes after the previous run *finished*, not after it started.
+
+    `OnUnitActiveSec=5min` counted from activation, so a render that took
+    longer than five minutes under host pressure (observed: mean 608 s on
+    2026-10-19) was due again the moment it finished, and the publisher never
+    idled. `OnUnitInactiveSec` cannot stack. `OnActiveSec` re-seeds the chain
+    whenever the timer itself is (re)started, so a stopped timer on a
+    long-uptime host does not come back with no next elapse -- the failure
+    the field timer documents.
+    """
     d = _directives(_unit("weatherwatch-publish.timer"))
-    assert d["OnUnitActiveSec"] == ["5min"]
+    assert d["OnUnitInactiveSec"] == ["15min"]
+    assert "OnUnitActiveSec" not in d, "an activation-relative timer can stack"
     assert d["OnBootSec"] == ["2min"]
+    assert d["OnActiveSec"] == ["2min"]
     assert d["Unit"] == ["weatherwatch-publish.service"]
     assert "Persistent" not in d, (
         "a missed static-report refresh is not data loss; OnBootSec covers it"
@@ -945,6 +957,52 @@ def test_timer_publishes_every_five_minutes_without_catchup():
     assert "[Install]" not in _unit("weatherwatch-publish.service"), (
         "the oneshot must be timer-driven, never enabled as a service"
     )
+
+
+#: Throttle, never kill: a oneshot over its MemoryHigh is reclaimed and slowed,
+#: and the host keeps its memory. MemoryMax would turn host pressure into a
+#: failed publish or a half-sealed run.
+ONESHOT_MEMORY_HIGH = {
+    "weatherwatch-publish.service": "1536M",
+    "weatherwatch-field.service": "1G",
+    "weatherwatch-social-detect.service": "1G",
+}
+
+
+def _seconds(value: str) -> int:
+    import re as _re
+    m = _re.fullmatch(r"(\d+)(min|s)?", value)
+    assert m, f"unrecognised duration: {value}"
+    return int(m.group(1)) * (60 if m.group(2) == "min" else 1)
+
+
+def test_every_oneshot_is_bounded_in_memory_time_and_priority():
+    """Measured 2026-10-19: the render held 1.6 GB RSS in D state and the
+    field run 800 MB, with no memory bound and the publisher at default
+    priority, which pushed the host into swap and a 67 % I/O stall."""
+    oneshots = [n for n in _all_service_units()
+                if _directives(_unit(n)).get("Type") == ["oneshot"]]
+    assert sorted(oneshots) == sorted(ONESHOT_MEMORY_HIGH), oneshots
+    for name in oneshots:
+        d = _directives(_unit(name))
+        assert d.get("MemoryHigh") == [ONESHOT_MEMORY_HIGH[name]], name
+        assert "MemoryMax" not in d, f"{name}: throttle, do not kill"
+        assert d.get("Nice") == ["10"], name
+        assert d.get("IOSchedulingClass") == ["idle"], name
+        timeout = d.get("TimeoutStartSec")
+        assert timeout and 0 < _seconds(timeout[0]) <= 30 * 60, (
+            f"{name}: a stuck oneshot must not run forever")
+
+
+def test_the_field_run_cannot_outlast_its_own_cadence_by_much():
+    import re as _re
+    schedule = _directives(_unit("weatherwatch-field.timer"))["OnCalendar"][0]
+    period_s = int(_re.match(r"\*:0/(\d+)", schedule).group(1)) * 60
+    timeout_s = _seconds(
+        _directives(_unit("weatherwatch-field.service"))["TimeoutStartSec"][0])
+    assert timeout_s <= 2 * period_s, (
+        "a sealing run stuck for longer than two periods has stopped "
+        "producing fresh readings; end it and let the next one start")
 
 
 # --- semantic honesty of the unclassified presentation ---------------------

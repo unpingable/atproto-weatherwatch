@@ -26,6 +26,13 @@ ExecStart=/opt/weatherwatch/.venv/bin/weatherwatch \
     social detect --tiers aggregate --last 24h \
     --social-db /var/lib/weatherwatch/social.sqlite
 
+# Bounded, measured 2026-10-19 on the deployed host: unbounded oneshots (render
+# 1.6 GB RSS in D state, field 800 MB) pushed it into swap and a 67 % I/O
+# stall. MemoryHigh throttles and reclaims rather than kills -- a MemoryMax
+# kill would turn host pressure into a half-done run. TimeoutStartSec ends a
+# run that is stuck rather than slow.
+MemoryHigh=1G
+TimeoutStartSec=20min
 Nice=10
 IOSchedulingClass=idle
 ProtectSystem=strict
