@@ -216,6 +216,12 @@ def test_freshness_and_interval_are_legible_near_the_top(report_db, tmp_path):
     assert 'status-present">PRESENT</span>' in html_doc
     assert html_doc.index("data-freshness") < html_doc.index(
         "A · Observation status")
+    # The publish cadence is stated from the constant the deployed timer is
+    # pinned to, not from the page's freshness allowance.
+    flat = " ".join(html_doc.split())
+    assert (f"rebuilt about every {report.PUBLISH_INTERVAL_S // 60} minutes"
+            in flat)
+    assert "rebuilt every 5 minutes" not in flat
 
 
 def test_partial_freshness_is_not_presented_as_current(conn, tmp_path):

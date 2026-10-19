@@ -774,8 +774,8 @@ def _station_bar(freshness: dict, latest, generated_at: str) -> str:
     {_esc(partial)}</div></div>
   <div><div class="k">this page was published</div>
     <div class="v">{_esc(_clock(generated_at))}</div>
-    <div class="note" style="margin-top:2px">static artifact, rebuilt every
-    {_fmt(PUBLICATION_INTERVAL_S // 60, 0)} minutes — never a live gauge</div></div>
+    <div class="note" style="margin-top:2px">static artifact, rebuilt about every
+    {_fmt(PUBLISH_INTERVAL_S // 60, 0)} minutes — never a live gauge</div></div>
   <div><div class="k">observation window</div>
     <div class="v">{_esc(latest.bucket_width)} s</div>
     <div class="note" style="margin-top:2px">every rate on this page is per
