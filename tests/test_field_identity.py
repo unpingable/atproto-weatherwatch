@@ -345,3 +345,18 @@ def test_batched_sealing_writes_exactly_what_changed(sealed, tmp_path):
         "SELECT observation_id, document FROM weather_observation"))
     from weatherwatch.social.envelope import stable_json
     assert stored == {o.observation_id: stable_json(o.as_dict()) for o in mixed}
+
+
+def test_series_points_share_their_repeated_values(sealed):
+    """Fourteen 30-day minute series are ~600,000 points held at once by the
+    sealer. Their flags, coverage state and run id take a handful of values,
+    so one object per value is shared rather than one per point."""
+    from tests.social.field.conftest import BASE as base, HOUR as hour
+
+    runs = query.compatible_runs(sealed, ENDPOINT)
+    s = query.series(sealed, runs, "like.create", since=base - 24 * hour,
+                     until=base + 240 * hour)
+    for attr in ("flags", "coverage_state", "run_id"):
+        values = [getattr(p, attr) for p in s.points]
+        assert len({id(v) for v in values}) == len(set(values)), attr
+    assert any(p.count is None for p in s.points), "fixture has no gap"

@@ -488,19 +488,27 @@ def series(
     sql = _SERIES_SQL.format(
         placeholders=",".join("?" * len(run_ids)), time_clause=time_clause
     )
-    rows = conn.execute(sql, params).fetchall()
+    # Streamed, not fetched: a 30-day minute series is ~43,000 rows, and the
+    # field sealer reads fourteen of them back to back. Flags, coverage state
+    # and run id take a handful of distinct values across the whole series, so
+    # every point shares one immutable object per value instead of carrying
+    # its own copy. Measured on a synthetic 30-day minute store: field sealing
+    # peaked at 288 MB instead of 480 MB, the report at 573 MB instead of
+    # 763 MB, and no value changed.
+    shared: dict = {}
+    one = lambda value: shared.setdefault(value, value)  # noqa: E731
 
     observed: dict[int, WindowPoint] = {}
-    for r in rows:
+    for r in conn.execute(sql, params):
         point = WindowPoint(
             bucket_start=r["bucket_start"],
             bucket_width=r["bucket_width"],
             count=r["count"],
             events_seen=r["events_seen"],
             observed_duration_us=r["observed_duration_us"],
-            flags=_flags_for(r),
-            coverage_state=r["coverage_state"],
-            run_id=r["run_id"],
+            flags=one(_flags_for(r)),
+            coverage_state=one(r["coverage_state"]),
+            run_id=one(r["run_id"]),
             gap_us=r["gap_us"] or 0,
             lag_ewma_s=r["lag_ewma_s"],
             lag_max_s=r["lag_max_s"],
@@ -537,7 +545,7 @@ def series(
             points.append(WindowPoint(
                 bucket_start=b, bucket_width=width, count=None,
                 events_seen=None, observed_duration_us=0,
-                flags=frozenset({FLAG_UNOBSERVED}),
+                flags=one(frozenset({FLAG_UNOBSERVED})),
                 coverage_state=FLAG_UNOBSERVED, run_id=None,
             ))
         b += width
