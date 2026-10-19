@@ -23,7 +23,7 @@ from . import COLLECTOR_VERSION, db, timeutil
 from .accumulator import LATE_EVENT_GRACE_S
 from .health import LAG_HIGH_THRESHOLD_S
 from .publication import evaluate_candidate
-from .report import PUBLICATION_INTERVAL_S
+from .report import PUBLISH_INTERVAL_S, PUBLISH_RENDER_ALLOWANCE_S
 
 
 SCHEMA = "project.ops.status/v1"
@@ -566,8 +566,16 @@ def _report_concerns(report_dir: Path, now: dt.datetime) -> list[dict]:
             newest = _parse_time(freshness.get("newest_observation_end"))
             source_limit = freshness.get("current_threshold_seconds")
             source_age = _age(now, newest)
+            # Judged as of the render. Re-judging it against `now` would add
+            # the artifact's own age, which is the artifact check's job, and
+            # with a 15-minute publisher a healthy candidate would read as
+            # backed by stale state for most of every cycle.
+            source_age_at_generation = (
+                _age(generated, newest) if generated is not None else None)
             artifact_age = _age(now, generated)
-            artifact_limit = 2 * PUBLICATION_INTERVAL_S
+            # Two publish cycles plus one render: one missed publish is
+            # tolerated, two are stale.
+            artifact_limit = 2 * PUBLISH_INTERVAL_S + PUBLISH_RENDER_ALLOWANCE_S
             candidate_facts.update({
                 "generated_at": summary.get("generated_at"),
                 "artifact_age_seconds": artifact_age,
@@ -575,6 +583,7 @@ def _report_concerns(report_dir: Path, now: dt.datetime) -> list[dict]:
                 "recorded_freshness_state": freshness.get("state"),
                 "newest_observation_end": freshness.get("newest_observation_end"),
                 "source_age_seconds": source_age,
+                "source_age_at_generation_seconds": source_age_at_generation,
                 "source_currentness_profile_seconds": source_limit,
                 "currentness_reevaluated_at": _iso(now),
             })
@@ -584,7 +593,8 @@ def _report_concerns(report_dir: Path, now: dt.datetime) -> list[dict]:
                 report_state, report_summary = STALE, "candidate report artifact is stale"
             elif newest is None:
                 report_state, report_summary = UNKNOWN, "candidate contains no observed aggregate window"
-            elif source_age is not None and source_age > source_limit:
+            elif (source_age_at_generation is not None
+                  and source_age_at_generation > source_limit):
                 report_state, report_summary = STALE, "candidate report is backed by stale aggregate state"
             elif freshness.get("state") == "partial":
                 report_state, report_summary = DEGRADED, "candidate's newest observation is partial"

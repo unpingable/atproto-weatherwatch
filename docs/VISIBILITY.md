@@ -66,14 +66,16 @@ Non-good concern states are data, not command failures.
 | `weatherwatch.persistence.access` | The configured SQLite file exists, passes SQLite's read `quick_check`, and permits acquisition of a `BEGIN IMMEDIATE` transaction that is rolled back without application writes. This is narrower than “database healthy” and says nothing about future capacity or recovery. |
 | `weatherwatch.persistence.continuity` | Required schema tables/version, integer endpoint-scoped cursor metadata, runtime metadata, atomic cursor/window semantics, and the continued absence of raw-event tables and identity columns. |
 | `weatherwatch.aggregate.production` | A `window_health` product exists for the latest run and remains fresh. A present row with `events_seen = 0` is `activity_state = EMPTY`; it is a produced aggregate, not observer blindness. |
-| `weatherwatch.report.candidate` | `summary.json` exists and its artifact and source times remain current when evaluated **now**. The recorded build-time freshness label is retained as a fact but cannot refresh the artifact later. |
+| `weatherwatch.report.candidate` | `summary.json` exists, the artifact's age is re-evaluated **now**, and the source it was rendered from was current **when it was rendered** (the artifact's age since then is the artifact check's job, not added twice). The recorded build-time freshness label is retained as a fact but cannot refresh the artifact later. |
 | `weatherwatch.publication.gate` | The current candidate is complete and contains no identity-shaped value, or is explicitly `REFUSED`, absent, or unreadable. Passing grants no authority and does not say publication happened. |
 
 The acquisition/aggregate profiles bind currentness to the source bucket width
 and the existing close grace. Lag uses the existing observation-health
 profile. Report-source freshness uses the report's existing “two publication
-intervals plus one source bucket” budget; candidate-artifact freshness uses
-the existing publication interval. These are semantic profile rules, not
+intervals plus one source bucket” budget, applied at render time;
+candidate-artifact freshness allows two runs of the deployed publisher plus one
+render (`report.PUBLISH_INTERVAL_S`, pinned to the timer, and
+`PUBLISH_RENDER_ALLOWANCE_S`). These are semantic profile rules, not
 notification thresholds. The manifest contains no recurrence, severity,
 page, remediation, or escalation policy.
 

@@ -81,6 +81,18 @@ MIN_RATIO_DENOMINATOR = 30
 #: would change what the published page calls `current`.
 PUBLICATION_INTERVAL_S = 5 * 60
 
+#: How often the deployed publisher actually runs: `OnUnitInactiveSec` in
+#: deploy/systemd/weatherwatch-publish.timer, pinned by test. Distinct from
+#: `PUBLICATION_INTERVAL_S` above, which is the page's freshness allowance and
+#: deliberately unchanged. Used for what the page says about its own rebuild
+#: cadence and for how old `weatherwatch status` lets a candidate get.
+PUBLISH_INTERVAL_S = 15 * 60
+
+#: Render time on top of the interval: the timer counts from when the previous
+#: run *finished*, so a candidate is the interval plus one render old just
+#: before it is replaced. Healthy renders measured ~90 s on the deployed host.
+PUBLISH_RENDER_ALLOWANCE_S = 5 * 60
+
 # --- what to show ----------------------------------------------------------
 
 #: (label, metric-or-metrics). Order is display order; a tuple of metrics is

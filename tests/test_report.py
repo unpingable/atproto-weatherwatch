@@ -959,6 +959,14 @@ def test_publish_timer_cannot_stack_and_survives_a_restart():
     )
 
 
+def test_the_publish_cadence_constant_is_the_deployed_timer():
+    """One number, read by the page and by the status surface: if the timer
+    moves and the constant does not, both start telling the wrong story."""
+    from weatherwatch import report as report_mod
+    d = _directives(_unit("weatherwatch-publish.timer"))
+    assert _seconds(d["OnUnitInactiveSec"][0]) == report_mod.PUBLISH_INTERVAL_S
+
+
 #: Throttle, never kill: a oneshot over its MemoryHigh is reclaimed and slowed,
 #: and the host keeps its memory. MemoryMax would turn host pressure into a
 #: failed publish or a half-sealed run.

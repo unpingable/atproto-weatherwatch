@@ -334,3 +334,53 @@ def test_human_status_covers_the_required_operator_sections(tmp_path):
                     "report / publish"):
         assert heading in rendered
     assert "Candidate output is not publication authority" in rendered
+
+
+def test_a_candidate_between_normal_publishes_is_current(tmp_path):
+    """The publisher runs 15 minutes after the previous run finished, so a
+    healthy candidate is routinely 15 minutes plus a render old. Read as
+    stale, Constellation would see weatherwatch failing all the time."""
+    from weatherwatch import report
+
+    report_dir = tmp_path / "report"
+    generated = NOW - dt.timedelta(seconds=report.PUBLISH_INTERVAL_S + 180)
+    _candidate(report_dir, generated=generated,
+               newest=generated - dt.timedelta(seconds=90))
+    concerns = _indexed(visibility.build_status(
+        tmp_path / "absent.sqlite", report_dir, now=NOW))
+    candidate = concerns["weatherwatch.report.candidate"]
+    assert candidate["state"] == "PRESENT", candidate["summary"]
+    assert candidate["facts"]["artifact_currentness_profile_seconds"] == (
+        2 * report.PUBLISH_INTERVAL_S + report.PUBLISH_RENDER_ALLOWANCE_S)
+
+
+def test_a_candidate_that_missed_two_publishes_is_stale(tmp_path):
+    from weatherwatch import report
+
+    report_dir = tmp_path / "report"
+    generated = NOW - dt.timedelta(
+        seconds=2 * report.PUBLISH_INTERVAL_S
+        + report.PUBLISH_RENDER_ALLOWANCE_S + 60)
+    _candidate(report_dir, generated=generated,
+               newest=generated - dt.timedelta(seconds=90))
+    concerns = _indexed(visibility.build_status(
+        tmp_path / "absent.sqlite", report_dir, now=NOW))
+    candidate = concerns["weatherwatch.report.candidate"]
+    assert candidate["state"] == "STALE"
+    assert candidate["summary"] == "candidate report artifact is stale"
+
+
+def test_a_fresh_candidate_rendered_from_stale_aggregates_is_still_stale(
+        tmp_path):
+    """Source staleness is judged when the candidate was rendered; the
+    artifact's own age since then is the artifact check's job."""
+    report_dir = tmp_path / "report"
+    generated = NOW - dt.timedelta(seconds=60)
+    _candidate(report_dir, generated=generated,
+               newest=generated - dt.timedelta(minutes=30))
+    concerns = _indexed(visibility.build_status(
+        tmp_path / "absent.sqlite", report_dir, now=NOW))
+    candidate = concerns["weatherwatch.report.candidate"]
+    assert candidate["state"] == "STALE"
+    assert candidate["summary"] == (
+        "candidate report is backed by stale aggregate state")
