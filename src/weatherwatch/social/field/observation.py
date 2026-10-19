@@ -244,6 +244,12 @@ CREATE TABLE IF NOT EXISTS weather_climatology (
 );
 CREATE INDEX IF NOT EXISTS idx_obs_time ON weather_observation(ts_start);
 CREATE INDEX IF NOT EXISTS idx_obs_clim ON weather_observation(climatology_id);
+-- The publisher's two reads, answered from an index instead of a scan and a
+-- sort over multi-kilobyte documents. Additive and idempotent: an existing
+-- store gains them on its next `init`.
+CREATE INDEX IF NOT EXISTS idx_clim_sealed ON weather_climatology(sealed_at);
+CREATE INDEX IF NOT EXISTS idx_obs_clim_time
+    ON weather_observation(climatology_id, ts_start);
 """
 
 
