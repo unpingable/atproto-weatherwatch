@@ -54,6 +54,13 @@ required = true
 description = "Are schema, endpoint-scoped cursor metadata, identity-free tables, and continuity invariants structurally coherent?"
 
 [[concerns]]
+id = "weatherwatch.persistence.social-store"
+question = "weatherwatch.question.social-store-bounded"
+profile = "weatherwatch.profile.social-store-bound.v1"
+required = true
+description = "Is the social observation store readable with its write-ahead log within the bound every job's close enforces?"
+
+[[concerns]]
 id = "weatherwatch.aggregate.production"
 question = "weatherwatch.question.aggregate-window-current"
 profile = "weatherwatch.profile.aggregate-production.v1"

@@ -24,6 +24,7 @@ from .accumulator import LATE_EVENT_GRACE_S
 from .health import LAG_HIGH_THRESHOLD_S
 from .publication import evaluate_candidate
 from .report import PUBLISH_INTERVAL_S, PUBLISH_RENDER_ALLOWANCE_S
+from .social.store import JOURNAL_SIZE_LIMIT_BYTES
 
 
 SCHEMA = "project.ops.status/v1"
@@ -62,6 +63,9 @@ CONCERNS = (
     ("weatherwatch.persistence.continuity",
      "weatherwatch.question.cursor-meta-coherent",
      "weatherwatch.profile.cursor-meta-coherence.v1"),
+    ("weatherwatch.persistence.social-store",
+     "weatherwatch.question.social-store-bounded",
+     "weatherwatch.profile.social-store-bound.v1"),
     ("weatherwatch.aggregate.production",
      "weatherwatch.question.aggregate-window-current",
      "weatherwatch.profile.aggregate-production.v1"),
@@ -73,6 +77,13 @@ CONCERNS = (
      "weatherwatch.profile.publish-gate.v1"),
 )
 _IDENTITY = {item[0]: item[1:] for item in CONCERNS}
+
+#: The social store's write-ahead log is truncated on every job's close and
+#: capped by `journal_size_limit`; a log larger than four of those limits
+#: means some reader is holding checkpoints off, which is how a 1.64 GB log
+#: took the host's I/O down on 2026-10-18 (Monitor #22) without anything
+#: observing it.
+SOCIAL_WAL_BOUND_BYTES = 4 * JOURNAL_SIZE_LIMIT_BYTES
 
 
 def _iso(value: dt.datetime) -> str:
@@ -558,6 +569,64 @@ def _aggregate_concern(ctx: dict, common: dict) -> dict:
                     facts, ctx["observed_at"])
 
 
+def _social_store_concern(path: Path, now: dt.datetime,
+                          wal_bound: int = SOCIAL_WAL_BOUND_BYTES) -> dict:
+    """Is the social observation store readable, and is its write-ahead log
+    within the bound every job's close enforces?
+
+    Read-only facts only: file sizes from the filesystem and three pragmas
+    over a `mode=ro` connection. It never checkpoints, never writes, and
+    never creates the store. The store is optional at a checkout (ABSENT);
+    once it exists its log is either bounded (PRESENT) or not (DEGRADED).
+    """
+    wal_path = Path(f"{path}-wal")
+    facts: dict[str, Any] = {
+        "path": str(path), "exists": path.is_file(), "bytes": None,
+        "wal_bytes": None, "wal_bound_bytes": wal_bound,
+        "page_count": None, "page_size": None, "freelist_pages": None,
+        "error": None,
+    }
+    observed_at = _iso(now)
+    if not facts["exists"]:
+        return _concern("weatherwatch.persistence.social-store", ABSENT,
+                        "social observation store has not been created",
+                        facts, observed_at)
+    try:
+        facts["bytes"] = path.stat().st_size
+        facts["wal_bytes"] = (wal_path.stat().st_size
+                              if wal_path.is_file() else 0)
+    except OSError as exc:
+        facts["error"] = type(exc).__name__
+        return _concern("weatherwatch.persistence.social-store", DEGRADED,
+                        "social observation store could not be measured",
+                        facts, observed_at)
+    try:
+        uri = f"file:{path.resolve().as_posix()}?mode=ro"
+        conn = sqlite3.connect(uri, uri=True, isolation_level=None)
+        try:
+            conn.execute("PRAGMA busy_timeout=250")
+            facts["page_count"] = conn.execute(
+                "PRAGMA page_count").fetchone()[0]
+            facts["page_size"] = conn.execute("PRAGMA page_size").fetchone()[0]
+            facts["freelist_pages"] = conn.execute(
+                "PRAGMA freelist_count").fetchone()[0]
+        finally:
+            conn.close()
+    except sqlite3.Error as exc:
+        facts["error"] = type(exc).__name__
+        return _concern("weatherwatch.persistence.social-store", DEGRADED,
+                        "social observation store could not be read",
+                        facts, observed_at)
+    if facts["wal_bytes"] > wal_bound:
+        return _concern(
+            "weatherwatch.persistence.social-store", DEGRADED,
+            "social store write-ahead log exceeds its bound; a reader is "
+            "holding checkpoints off", facts, observed_at)
+    return _concern("weatherwatch.persistence.social-store", PRESENT,
+                    "social store is readable and its write-ahead log is "
+                    "bounded", facts, observed_at)
+
+
 def _report_concerns(report_dir: Path, now: dt.datetime) -> list[dict]:
     gate = evaluate_candidate(report_dir)
     candidate_facts: dict[str, Any] = {
@@ -641,10 +710,17 @@ def _report_concerns(report_dir: Path, now: dt.datetime) -> list[dict]:
 
 def build_status(db_path: str | Path = db.DEFAULT_DB_PATH,
                  report_dir: str | Path = "build/report",
-                 now: dt.datetime | None = None) -> dict:
-    """Build one deterministic visibility document from current local facts."""
+                 now: dt.datetime | None = None,
+                 social_db_path: str | Path | None = None) -> dict:
+    """Build one deterministic visibility document from current local facts.
+
+    `social_db_path` defaults to `social.sqlite` beside the weather store,
+    which is where the deployed units keep it (`--social-db`).
+    """
     now = (now or timeutil.now_utc()).astimezone(dt.timezone.utc)
     db_path, report_dir = Path(db_path), Path(report_dir)
+    social_db_path = (Path(social_db_path) if social_db_path is not None
+                      else db_path.with_name("social.sqlite"))
     access, conn = _database_snapshot(db_path)
     snapshot = None
     if conn is not None:
@@ -656,6 +732,7 @@ def build_status(db_path: str | Path = db.DEFAULT_DB_PATH,
         finally:
             conn.close()
     concerns = _database_concerns(access, snapshot, now)
+    concerns.append(_social_store_concern(social_db_path, now))
     concerns.extend(_report_concerns(report_dir, now))
     by_id = {item["concern_id"]: item for item in concerns}
     ordered = [by_id[cid] for cid, _, _ in CONCERNS]
@@ -746,13 +823,17 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m weatherwatch.visibility")
     parser.add_argument("--db", default=str(db.DEFAULT_DB_PATH))
     parser.add_argument("--report-dir", default="build/report")
+    parser.add_argument("--social-db", default=None,
+                        help="social observation store (default: social.sqlite "
+                             "beside --db)")
     parser.add_argument("--now", default=None)
     parser.add_argument("--format", choices=("json", "text"), default="text")
     args = parser.parse_args(argv)
     now = _parse_time(args.now) if args.now else None
     if args.now and now is None:
         parser.error("--now must be an RFC3339 date-time")
-    document = build_status(args.db, args.report_dir, now=now)
+    document = build_status(args.db, args.report_dir, now=now,
+                            social_db_path=args.social_db)
     print(json.dumps(document, indent=2, sort_keys=True) if args.format == "json" else render_human(document))
     return 0
 

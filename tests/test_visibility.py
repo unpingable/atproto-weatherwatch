@@ -81,7 +81,7 @@ def test_manifest_declares_the_exact_required_surface_without_execution_policy()
     assert ids == [item[0] for item in visibility.CONCERNS]
     assert questions == [item[1] for item in visibility.CONCERNS]
     assert profiles == [item[2] for item in visibility.CONCERNS]
-    assert len(blocks) == len(set(ids)) == 10
+    assert len(blocks) == len(set(ids)) == 11
     assert all("required = true" in block for block in blocks)
     for forbidden in ("command =", "severity =", "cadence =", "page =",
                       "notify =", "remediation ="):
@@ -99,6 +99,7 @@ def test_empty_checkout_is_explicitly_absent_or_unknown_not_green(tmp_path):
     assert concerns["weatherwatch.observation.coverage"]["state"] == "ABSENT"
     assert concerns["weatherwatch.acquisition.connection"]["state"] == "UNKNOWN"
     assert concerns["weatherwatch.aggregate.production"]["state"] == "ABSENT"
+    assert concerns["weatherwatch.persistence.social-store"]["state"] == "ABSENT"
     assert concerns["weatherwatch.report.candidate"]["state"] == "ABSENT"
     assert concerns["weatherwatch.publication.gate"]["state"] == "ABSENT"
     assert document["authority"] == {
@@ -404,3 +405,53 @@ def test_a_large_unclassified_share_is_ambiguity(conn, tmp_path):
     loss = _indexed(visibility.build_status(_path(conn), tmp_path / "report", now=NOW))[
         "weatherwatch.observation.loss"]
     assert loss["state"] == "DEGRADED" and "ambiguous" in loss["summary"], loss
+
+
+def test_social_store_is_observed_with_its_write_ahead_log(tmp_path):
+    """Monitor #22: a 1.64 GB social.sqlite-wal took the host down with
+    nothing observing it. The store is now a concern of its own: readable
+    with a bounded log is PRESENT; a log over the bound is DEGRADED; an
+    unreadable file is DEGRADED; no store is ABSENT, never green."""
+    import sqlite3
+    from weatherwatch.social import store as social_store
+
+    weather = tmp_path / "weatherwatch.sqlite"
+    social = tmp_path / "social.sqlite"
+    conn = social_store.connect(social)
+    social_store.init_db(conn)
+    conn.execute("BEGIN")
+    for i in range(50):
+        social_store.set_meta(conn, f"k{i}", "v" * 1000)
+    conn.execute("COMMIT")
+    # Hold a read snapshot so the log cannot be truncated on close, then
+    # close the writer: the -wal file survives with frames in it.
+    reader = sqlite3.connect(str(social))
+    reader.execute("BEGIN")
+    reader.execute("SELECT COUNT(*) FROM meta").fetchone()
+    social_store.close(conn)
+    wal_bytes = (tmp_path / "social.sqlite-wal").stat().st_size
+    assert wal_bytes > 0
+
+    concern = visibility._social_store_concern(social, NOW)
+    assert concern["state"] == "PRESENT", concern
+    assert concern["facts"]["wal_bytes"] == wal_bytes
+    assert concern["facts"]["page_count"] > 0
+    assert concern["facts"]["freelist_pages"] is not None
+
+    over = visibility._social_store_concern(social, NOW, wal_bound=wal_bytes - 1)
+    assert over["state"] == "DEGRADED"
+    assert "write-ahead log exceeds its bound" in over["summary"]
+    reader.close()
+
+    # The document carries it, beside the weather store, as a required
+    # concern that defaults to social.sqlite next to --db.
+    indexed = _indexed(visibility.build_status(weather, tmp_path / "report",
+                                               now=NOW))
+    assert indexed["weatherwatch.persistence.social-store"]["state"] == "PRESENT"
+    assert indexed["weatherwatch.persistence.social-store"]["required"] is True
+    assert indexed["weatherwatch.persistence.social-store"]["facts"]["path"] == str(social)
+
+    social.write_bytes(b"not sqlite")
+    broken = visibility._social_store_concern(social, NOW)
+    assert broken["state"] == "DEGRADED"
+    assert broken["facts"]["error"] is not None
