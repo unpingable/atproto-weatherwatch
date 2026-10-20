@@ -97,19 +97,13 @@ echo "==> Privacy gate"
 "${RENDER[@]}" publication-gate --report-dir "$BUILD"
 
 if [ "$MODE" = "local" ]; then
-  STAGE="${TARGET}.incoming"
-  PREV="${TARGET}.prev"
-  echo "==> Staging to $STAGE"
-  rm -rf "$STAGE"; mkdir -p "$STAGE"
-  cp -a "$BUILD/." "$STAGE/"
-  echo "==> Atomic swap"
-  rm -rf "$PREV"
-  # NB: an `[ -d ] && mv` one-liner would abort under `set -e` on first run,
-  # when the target does not exist yet.
-  if [ -d "$TARGET" ]; then mv "$TARGET" "$PREV"; fi
-  mv "$STAGE" "$TARGET"
-  chmod -R a+rX "$TARGET"
-  rm -rf "$PREV"
+  # Publish into the target in place: it is the only path the publisher may write. New and changed files land
+  # by rename in one burst at the end (--delay-updates), files the new tree dropped are removed after, so a
+  # reader never sees a missing index or a half-written file. --checksum: a same-size file rendered in the same
+  # second still differs. No write on the target's parent is needed.
+  [ -d "$TARGET" ] && [ -w "$TARGET" ] || { echo "!! $TARGET must exist and be writable by the publisher" >&2; exit 1; }
+  echo "==> Publishing to $TARGET"
+  rsync -a --checksum --delay-updates --delete-after --chmod=Da+rx,Fa+r "$BUILD/" "$TARGET/"
 else
   STAGE="${REMOTE}.incoming"
   PREV="${REMOTE}.prev"

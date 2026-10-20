@@ -55,7 +55,12 @@ configuration.
   throttled, never killed), `TimeoutStartSec`, `Nice=10` and
   `IOSchedulingClass=idle`. Every job that opens `social.sqlite` checkpoints
   its WAL on close (`social/store.py::close`).
-- `deploy/publish.sh` implements local or explicit remote publication.
+- `deploy/sysusers.d/weatherwatch.conf` and `deploy/tmpfiles.d/weatherwatch.conf`
+  create the standalone account and its own state/webroot paths. Run sysusers before tmpfiles.
+- `deploy/publish.sh` implements local or explicit remote publication. Local publication
+  uses the existing portable rsync path within its own webroot; no Labelwatch group
+  or parent-directory write is needed. Set optional `WW_PUBLIC_URL` in
+  `/etc/weatherwatch/publish.env` for the deployment.
 - `weatherwatch publication-gate` is the shared deterministic candidate gate
   used by both `publish.sh` and `weatherwatch status`. Passing means only that
   the local candidate is structurally complete and privacy-clean; it grants no
@@ -82,7 +87,7 @@ The committed units express these invariants:
 - only the publisher can write the static webroot;
 - both use `ProtectSystem=strict`, `ProtectHome=true`, no privilege escalation,
   and an empty capability bounding set;
-- the publisher uses the same tested render/privacy/swap path as manual runs.
+- the publisher uses the same tested render/privacy/publication path as manual runs.
 
 The example install uses:
 
