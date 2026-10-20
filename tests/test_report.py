@@ -849,13 +849,13 @@ def test_units_do_not_run_as_root_and_stay_confined():
         assert d["ProtectSystem"] == ["strict"]
         assert d["ProtectHome"] == ["true"]
         assert d["CapabilityBoundingSet"] == [""]
-    # only the publisher may reach the webroot, and only via a per-unit group
+    # only the publisher may write its own webroot, without another application group
     coll = _directives(_unit("weatherwatch-collector.service"))
     pub = _directives(_unit("weatherwatch-publish.service"))
     assert coll["ReadWritePaths"] == ["/var/lib/weatherwatch"]
-    assert "/var/www" in pub["ReadWritePaths"][0]
+    assert pub["ReadWritePaths"] == ["/var/lib/weatherwatch /var/www/weatherwatch"]
     assert "SupplementaryGroups" not in coll
-    assert pub["SupplementaryGroups"] == ["labelwatch"]
+    assert "SupplementaryGroups" not in pub
     # nothing else may reach the webroot at all
     for name in _all_service_units():
         if name == "weatherwatch-publish.service":
