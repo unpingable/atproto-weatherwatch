@@ -1,7 +1,7 @@
 # P4 standalone deployment reconciliation
 
-Source monitoring implementation: ad9ee32. The recorded production source9daa4dc
-had diverged from the testbed's portable publication sourceec9d0cf. This source
+Source monitoring implementation: ad9ee32. The recorded production source 9daa4dc
+had diverged from the testbed's portable publication source ec9d0cf. This source
 reconciliation restores ec9d0cf's existing sysusers/tmpfiles and own-webroot rsync
 publication path, while retaining the later production memory/timeout/priority
 bounds and timer cadence. It removes the borrowed Labelwatch supplementary group
@@ -22,7 +22,7 @@ by source comparison; full cold-install qualification is not claimed.
 
 Formalization consideration: root owns the bounded claim that local publication
 needs write access only to its own declared target and monitoring output stays
-inside application-owned state. The exact accepted portable sourceec9d0cf and
+inside application-owned state. The exact accepted portable source ec9d0cf and
 source diff suffice for this reuse; existing publication tests and the P4 consumer
 proof cover affected behavior. Per-file rsync replacement is not a whole-tree
 atomic snapshot. No rollback of an externally visible publication is claimed.

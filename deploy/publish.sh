@@ -5,18 +5,18 @@
 # talks to Labelwatch, and does not care whether this script ever succeeds —
 # collection and serving are separate concerns and stay that way.
 #
-# Replacement is atomic at the rename: the incoming tree is staged beside the
-# live one and swapped in, so a reader gets the whole old report or the whole
-# new one, never a half-written mix. This mirrors what Labelwatch already does
-# for its own webroot.
+# Local publication uses delayed per-file replacement within its own webroot.
+# It does not remove the live index before replacing it, but readers can see
+# files from different report generations; this is not a whole-tree snapshot.
+# Remote publication stages a directory and replaces the live directory.
 #
 #   ./deploy/publish.sh                       # regenerate + publish (remote)
 #   ./deploy/publish.sh --skip-generate       # publish what is already built
 #   WW_MODE=local ./deploy/publish.sh         # publish on the serving host itself
 #
-# Two modes, one privacy gate and one atomic-swap discipline:
+# Two modes share one privacy gate:
 #   remote  push rendered output from a workstation over ssh (original path)
-#   local   render and swap on the serving host (used by the systemd timer)
+#   local   render and update its own webroot (used by the systemd timer)
 #
 # Env:
 #   WW_MODE      remote | local           (default remote)
