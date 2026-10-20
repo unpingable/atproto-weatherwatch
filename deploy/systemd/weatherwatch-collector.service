@@ -27,7 +27,9 @@ Environment=PYTHONDONTWRITEBYTECODE=1
 # fix it but is 3.11+; this host is 3.10.
 ExecStart=/opt/weatherwatch/.venv/bin/weatherwatch \
     --db /var/lib/weatherwatch/weatherwatch.sqlite \
-    collect --endpoint wss://jetstream1.us-east.bsky.network/subscribe
+    collect --endpoint wss://jetstream1.us-east.bsky.network/subscribe \
+    --monitoring-snapshot /var/lib/weatherwatch/monitoring.json \
+    --monitoring-metrics /var/lib/weatherwatch/metrics/weatherwatch.prom
 
 # systemd owns supervision: no shell loop, no in-process daemonising, no cron.
 Restart=on-failure

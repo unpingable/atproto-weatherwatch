@@ -91,6 +91,8 @@ class Collector:
         bucket_width: int = DEFAULT_BUCKET_WIDTH_S,
         checkpoint_path: Path | None = None,
         social_sink=None,
+        monitoring_snapshot: Path | None = None,
+        monitoring_metrics: Path | None = None,
     ):
         self.conn = conn
         self.endpoint = endpoint
@@ -102,6 +104,10 @@ class Collector:
         #: separate bounded-custody lane; doing so never changes the weather
         #: database or classifier output. See social/BOUNDARIES.md.
         self.social_sink = social_sink
+        self.monitoring_snapshot = monitoring_snapshot
+        self.monitoring_metrics = monitoring_metrics
+        if monitoring_metrics is not None and monitoring_snapshot is None:
+            raise ValueError("monitoring metrics require a monitoring snapshot")
 
         self.run_id = new_run_id()
         self.health = ObservationHealth()
@@ -193,6 +199,12 @@ class Collector:
                 json.dumps(payload, sort_keys=True, separators=(",", ":")),
             )
             self._runtime_last_write_mono = now_mono
+            if self.monitoring_snapshot is not None:
+                from .monitoring import publish_snapshot
+                try:
+                    publish_snapshot(self.conn, self.run_id, payload, self.monitoring_snapshot, self.monitoring_metrics)
+                except (OSError, ValueError, TypeError, sqlite3.Error) as exc:
+                    LOG.warning("collector monitoring snapshot failed: %s", exc)
         except sqlite3.Error as exc:
             LOG.warning("collector runtime status write failed: %s", exc)
 

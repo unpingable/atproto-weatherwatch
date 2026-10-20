@@ -1,0 +1,8 @@
+name = "weatherwatch"
+role = "ATProto aggregate weather observation"
+runtime = {systemd = "weatherwatch-collector.service"}
+status = {kind = "project-ops-status", user = "weatherwatch", cwd = "/opt/weatherwatch", environment = {PYTHONPATH = "src"}, argv = ["/opt/weatherwatch/.venv/bin/python", "-m", "weatherwatch.monitoring", "--snapshot", "/var/lib/weatherwatch/monitoring.json", "--report-dir", "/var/lib/weatherwatch/build/report"]}
+contract = {concerns = "/opt/weatherwatch/.ops/monitoring-concerns.toml", sha256 = "@WEATHERWATCH_CONTRACT_SHA256@"}
+probes = {stores = [{name = "weather", path = "/var/lib/weatherwatch/weatherwatch.sqlite"}, {name = "social", path = "/var/lib/weatherwatch/social.sqlite"}], outputs = [{name = "candidate-summary", path = "/var/lib/weatherwatch/build/report/summary.json"}]}
+thresholds = {metrics_observation_age_seconds = 60, last_success_age_seconds = 125, output_age_seconds = 2100}
+timers = ["weatherwatch-publish.timer", "weatherwatch-field.timer", "weatherwatch-social-detect.timer"]

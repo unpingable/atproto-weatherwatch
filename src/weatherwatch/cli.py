@@ -117,6 +117,8 @@ async def _run_collect(args) -> int:
         bucket_width=args.bucket_width,
         checkpoint_path=Path(args.db).parent / "baseline_checkpoint.json",
         social_sink=social_sink,
+        monitoring_snapshot=Path(args.monitoring_snapshot) if args.monitoring_snapshot else None,
+        monitoring_metrics=Path(args.monitoring_metrics) if args.monitoring_metrics else None,
     )
     if social_sink is not None:
         # The sink shares the collector's run identity so custody and weather
@@ -429,6 +431,8 @@ def main(argv: list[str] | None = None) -> int:
                    help=f"URL or one of {sorted(KNOWN_ENDPOINTS)}")
     p.add_argument("--duration", default=None, help="e.g. 30m, 1h, 600s")
     p.add_argument("--bucket-width", type=int, default=DEFAULT_BUCKET_WIDTH_S)
+    p.add_argument("--monitoring-metrics", help="ordinary .prom output alongside --monitoring-snapshot")
+    p.add_argument("--monitoring-snapshot", help="publish bounded committed-progress snapshot as the application account")
     # Edge custody is opt-in and off by default. Turning it on changes this
     # process's retention posture -- see src/weatherwatch/social/BOUNDARIES.md.
     p.add_argument("--social-edges", action="store_true",

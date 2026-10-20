@@ -56,7 +56,7 @@ IDENTITY_PATTERNS = (
 )
 
 
-def evaluate_candidate(report_dir: str | Path) -> dict:
+def evaluate_candidate(report_dir: str | Path, *, max_files: int | None = None, max_bytes: int | None = None) -> dict:
     """Evaluate one local rendered candidate without changing it."""
     root = Path(report_dir)
     result = {
@@ -89,7 +89,27 @@ def evaluate_candidate(report_dir: str | Path) -> dict:
         return result
 
     try:
-        entries = sorted(root.rglob("*"))
+        if max_files is not None or max_bytes is not None:
+            if not isinstance(max_files, int) or max_files <= 0 or not isinstance(max_bytes, int) or max_bytes <= 0:
+                raise ValueError("bounded gate requires positive file and byte limits")
+            def bounded_entries():
+                import os
+                pending, seen = [root], 0
+                while pending:
+                    directory = pending.pop()
+                    with os.scandir(directory) as entries:
+                        for entry in entries:
+                            seen += 1
+                            if seen > max_files:
+                                raise ValueError("candidate gate entry budget exceeded")
+                            path = Path(entry.path)
+                            yield path
+                            if entry.is_dir(follow_symlinks=False):
+                                pending.append(path)
+            entries = bounded_entries()
+        else:
+            entries = sorted(root.rglob("*"))
+        consumed = 0
         for path in entries:
             if path.is_symlink():
                 result["refusals"].append({
@@ -99,7 +119,14 @@ def evaluate_candidate(report_dir: str | Path) -> dict:
                 continue
             if not path.is_file():
                 continue
-            data = path.read_bytes()
+            if max_bytes is None:
+                data = path.read_bytes()
+            else:
+                with path.open("rb") as stream:
+                    data = stream.read(max_bytes - consumed + 1)
+                consumed += len(data)
+                if consumed > max_bytes:
+                    raise ValueError("candidate gate byte budget exceeded")
             result["files_scanned"] += 1
             relative = path.relative_to(root).as_posix()
             for fragment in AUTHORED_IDENTITY_FRAGMENTS.get(relative, ()):
@@ -117,9 +144,10 @@ def evaluate_candidate(report_dir: str | Path) -> dict:
                         "shape": kind,
                         "file": relative,
                     })
-    except OSError as exc:
+    except (OSError, ValueError) as exc:
         result["disposition"] = "ERROR"
         result["reason"] = f"candidate could not be read: {type(exc).__name__}"
+        result["budget_exhausted"] = isinstance(exc, ValueError)
         return result
 
     if result["refusals"]:
