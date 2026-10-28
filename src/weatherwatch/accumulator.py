@@ -134,8 +134,8 @@ class Accumulator:
 
         self.first_event_us: int | None = None
         self.last_event_us: int | None = None
-        #: Wall clock at the last observed event. Distinguishes "the stream
-        #: is quiet" from "we are behind on a busy stream".
+        #: Wall clock at the last received event. Reception time alone does
+        #: not establish stream completeness or authorize window closure.
         self._last_event_wall_us: int | None = None
 
         # Pending signals attributed to whichever window is open when the
@@ -198,9 +198,8 @@ class Accumulator:
                 self._open.late_events += 1
             else:
                 self._pending_late_events += 1
-            # A late arrival is still the stream arriving: it must not read as
-            # silence to tick(), or a replay behind the high water would let
-            # wall clock march more empty windows past it.
+            # Record reception even when this event cannot change a closed
+            # window. Reception time does not authorize further finalization.
             self._last_event_wall_us = self._now_us()
             # One line per closed window, not per event: a replay of a busy
             # minute is tens of thousands of late events, and logging each one
