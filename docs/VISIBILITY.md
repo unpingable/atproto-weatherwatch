@@ -70,7 +70,9 @@ Non-good concern states are data, not command failures.
 | `weatherwatch.publication.gate` | The current candidate is complete and contains no identity-shaped value, or is explicitly `REFUSED`, absent, or unreadable. Passing grants no authority and does not say publication happened. |
 
 The acquisition/aggregate profiles bind currentness to the source bucket width
-and the existing close grace. Lag uses the existing observation-health
+and the existing five-second freshness allowance. That allowance does not authorize
+wall-clock window finalization. A receive timeout produces no new aggregate: runtime may
+stay connected while acquisition and aggregate concerns become stale. Lag uses the existing observation-health
 profile. Report-source freshness uses the report's existing “two publication
 intervals plus one source bucket” budget, applied at render time;
 candidate-artifact freshness allows two runs of the deployed publisher plus one
@@ -154,3 +156,21 @@ facts and the exact semantic profile at the evaluation time.
 Monitor now implements discovery, bounded acquisition, structural matching,
 and explicit `MISSING_REQUIRED_OBSERVATION` inventory state. It does not
 provide generic NQ semantic admission.
+
+## Recovery from premature wall-clock finalization
+
+A collector built before the stalled-replay correction could finalize windows after a
+receive timeout, advance its in-memory window high water past the durable event cursor,
+and then discard resumed events as late. A fresh connection heartbeat did not establish
+aggregate progress. The corrected collector waits for stream progression; silence alone
+cannot prove an empty complete window because Jetstream supplies no completeness watermark.
+
+After installing the correction, use the existing collector service restart procedure to
+begin a new run. Its accumulator starts without the predecessor's in-memory high water and
+resumes the existing endpoint cursor plus one. Preserve the database and prior run rows;
+do not clear the cursor, relabel old coverage, or skip ahead to current wall time. Verify
+that the new run's event counts and durable cursor advance, then separately check freshness
+of acquisition, aggregate and publication concerns. A replay can make progress while still
+being stale. If the relay no longer retains the requested interval, retain the collector's
+reported resume gap, including on the first connection of the new run; this repair
+cannot reconstruct unavailable upstream history.

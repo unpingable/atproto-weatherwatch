@@ -8,6 +8,8 @@ Everything else about restart correctness follows from this one property.
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 
 from weatherwatch import db
@@ -64,25 +66,44 @@ def test_cursor_cannot_advance_with_no_committed_windows(conn):
         db.flush_windows(conn, "run-test-000000", endpoint, [], 12345)
 
 
-def test_empty_window_does_not_advance_the_cursor(conn):
-    """An empty observed window proves we were watching. It does not prove
-    the stream advanced, so it must not push the cursor past unseen events."""
+def test_historical_empty_window_does_not_advance_the_cursor(conn):
+    """Preserve the cursor meaning of existing explicit empty rows."""
     run_id, endpoint = _run(conn)
-    fake_now = {"v": int((BASE + 2) * 1_000_000)}
-    acc = Accumulator(run_id, bucket_width=WIDTH, grace_s=5,
-                      now_us=lambda: fake_now["v"])
+    acc = Accumulator(run_id)
     acc.observe(ev(1))
-    fake_now["v"] = int((BASE + 200) * 1_000_000)  # stream went quiet
-    acc.tick()  # wall clock has moved well past this window
+    acc.observe(ev(61))
+    first = acc.take_closed()[0]
+    empty = replace(first, bucket_start=BASE+WIDTH, counts={}, events_seen=0,
+                    first_event_us=None, last_event_us=None)
+    assert Accumulator.commit_cursor_for([empty]) is None
+    cursor = Accumulator.commit_cursor_for([first, empty])
+    db.flush_windows(conn, run_id, endpoint, [first, empty], cursor)
+    assert db.get_cursor(conn, endpoint) == ev(1).time_us
+
+
+def test_idle_wallclock_does_not_finalize_replayable_window(conn):
+    run_id, endpoint = _run(conn)
+    clock = [int((BASE + 40) * 1_000_000)]
+    acc = Accumulator(run_id, now_us=lambda: clock[0])
+    for off in (-59, -30, 1, 20, 40):
+        acc.observe(ev(off))
     closed = acc.take_closed()
-    assert closed
-    cursor = Accumulator.commit_cursor_for(closed)
-    assert cursor == int((BASE + 1) * 1_000_000)
-
-    empty_only = [w for w in closed if w.events_seen == 0]
-    if empty_only:
-        assert Accumulator.commit_cursor_for(empty_only) is None
-
+    db.flush_windows(conn, run_id, endpoint, closed, acc.commit_cursor_for(closed))
+    cursor = db.get_cursor(conn, endpoint)
+    clock[0] = int((BASE + 3*WIDTH + 6) * 1_000_000)
+    acc.tick()  # no source watermark: quiet upstream and transport stall look identical
+    assert acc.take_closed() == []
+    assert db.get_cursor(conn, endpoint) == cursor
+    acc.discard_open_window()
+    for off in (1, 20, 40, 41, 50, 59, 61):
+        acc.observe(ev(off))
+    closed = acc.take_closed()
+    assert len(closed) == 1
+    assert closed[0].bucket_start == BASE
+    assert closed[0].events_seen == 6
+    assert closed[0].late_events == 0
+    db.flush_windows(conn, run_id, endpoint, closed, acc.commit_cursor_for(closed))
+    assert db.get_cursor(conn, endpoint) == ev(59).time_us
 
 def test_crash_before_flush_leaves_cursor_unmoved(conn):
     """Counts accumulated but never flushed are simply gone. The cursor did
@@ -220,8 +241,7 @@ def test_a_replay_behind_the_high_water_is_counted_logged_once_and_not_silence(c
     clock = [int((BASE + 1) * 1_000_000)]
     acc = Accumulator("run-test-000000", bucket_width=WIDTH, grace_s=5, now_us=lambda: clock[0])
     acc.observe(ev(1))
-    clock[0] = int((BASE + 400) * 1_000_000)
-    acc.tick()                                   # silence: wall clock closes windows up to BASE+5*WIDTH
+    acc.observe(ev(301))                         # genuine stream progression closes first window
     acc.take_closed()
     acc.discard_open_window()                    # reconnect: nothing open while the replay lands
     with caplog.at_level("WARNING"):

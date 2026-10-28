@@ -207,9 +207,13 @@ class Collector:
         cursor = db.get_cursor(self.conn, self.endpoint)
         if cursor is None:
             self._resume_from_us = None
+            self._awaiting_first_event_after_resume = False
             return self.endpoint
         resume = cursor + 1  # M0: cursor=T is inclusive; T+1 is exact
         self._resume_from_us = resume
+        # A restarted process also resumes retained history. Its first frame
+        # must disclose a missing replay interval, just like an in-run reconnect.
+        self._awaiting_first_event_after_resume = True
         return f"{self.endpoint}?cursor={resume}"
 
     # -- flushing ----------------------------------------------------------
@@ -342,9 +346,6 @@ class Collector:
                         if not first_connection:
                             self._reconnects += 1
                             self.health.record_reconnect()
-                            self._awaiting_first_event_after_resume = (
-                                self._resume_from_us is not None
-                            )
                         first_connection = False
                         backoff = RECONNECT_BACKOFF_START_S
 
@@ -352,9 +353,9 @@ class Collector:
                             try:
                                 raw = await asyncio.wait_for(ws.recv(), timeout=1.0)
                             except asyncio.TimeoutError:
-                                # Silence. Still an observation: let wall clock
-                                # close empty windows so a quiet minute inside
-                                # a run is recorded, not merely absent.
+                                # A receive timeout proves no stream progress.
+                                # Keep the open window replayable; a runtime
+                                # heartbeat does not prove observed silence.
                                 self.acc.tick()
                                 self._flush_pending()
                                 self._record_runtime("connected", heartbeat=True)

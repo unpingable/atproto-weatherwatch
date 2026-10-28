@@ -303,3 +303,66 @@ def test_no_identity_bearing_value_reaches_the_database(conn):
             assert needle not in blob, (
                 f"{needle!r} leaked into {table}: {blob[:400]}"
             )
+
+
+def test_restart_recovers_cursor_behind_historical_empty_windows(conn):
+    """A new run replays actual events without rewriting predecessor claims."""
+    from dataclasses import replace
+    from weatherwatch.accumulator import Accumulator
+    from weatherwatch.classify import Classification
+
+    endpoint = 'wss://relay.invalid/subscribe'
+    old_run = 'run-before-stall'
+    db.start_run(conn, old_run, endpoint, 'test', WIDTH, '2026-01-01T00:00:00Z', None, None)
+    acc = Accumulator(old_run)
+    first_time = BASE*1_000_000 + 1
+    acc.observe(Classification(first_time, ('post.create',)))
+    acc.observe(Classification((BASE+WIDTH)*1_000_000 + 1, ('post.create',)))
+    first = acc.take_closed()[0]
+    # Retained predecessor output from the old wallclock finalizer. It is a
+    # fixture of historical claims, not an assertion that silence proved them.
+    empty = [replace(first, bucket_start=BASE+i*WIDTH, counts={}, events_seen=0,
+                     first_event_us=None, last_event_us=None, partial=False,
+                     observed_duration_us=WIDTH*1_000_000) for i in range(1, 6)]
+    db.flush_windows(conn, old_run, endpoint, [first]+empty, first_time)
+    before = [tuple(r) for r in conn.execute(
+        'SELECT * FROM window_health WHERE run_id=? ORDER BY bucket_start', (old_run,))]
+
+    collector = Collector(conn=conn, endpoint=endpoint)
+    assert collector._start_run() == first_time
+    assert collector._build_url() == endpoint + '?cursor=' + str(first_time+1)
+    for i, seconds in enumerate((61, 62, 121)):
+        collector._handle_raw(envelope((BASE+seconds)*1_000_000, i))
+        collector.acc.tick()
+        collector._flush_pending()
+    assert db.get_cursor(conn, endpoint) == (BASE+62)*1_000_000
+    rows = conn.execute('SELECT events_seen, late_events FROM window_health WHERE run_id=?',
+                        (collector.run_id,)).fetchall()
+    assert [(r['events_seen'], r['late_events']) for r in rows] == [(2, 0)]
+    after = [tuple(r) for r in conn.execute(
+        'SELECT * FROM window_health WHERE run_id=? ORDER BY bucket_start', (old_run,))]
+    assert after == before
+
+
+def test_first_connection_with_cursor_reports_unavailable_resume_interval(conn):
+    endpoint = 'wss://relay.invalid/resume'
+    first = Collector(conn=conn, endpoint=endpoint)
+    first._start_run()
+    first._build_url()
+    assert first._resume_from_us is None
+    assert not first._awaiting_first_event_after_resume
+    first._handle_raw(envelope(BASE*1_000_000, 0))
+    first.acc.close_for_shutdown()
+    first._flush_pending()
+    resumed = Collector(conn=conn, endpoint=endpoint)
+    resumed._start_run()
+    resumed._build_url()
+    # Relay can no longer replay the requested interval; its first event is
+    # three minutes newer. A fresh run must disclose the gap just like reconnect.
+    resumed._handle_raw(envelope((BASE+180)*1_000_000, 1))
+    resumed._handle_raw(envelope((BASE+241)*1_000_000, 2))
+    resumed._flush_pending()
+    row = conn.execute('SELECT gap_us, resume_seam, reconnects FROM window_health WHERE run_id=?',
+                       (resumed.run_id,)).fetchone()
+    assert row['gap_us'] == 180*1_000_000-1
+    assert row['resume_seam'] == 1

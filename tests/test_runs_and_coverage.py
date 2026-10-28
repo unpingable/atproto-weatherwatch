@@ -77,43 +77,34 @@ def test_full_window_is_not_partial(conn):
     assert closed[BASE].observed_duration_us == WIDTH * 1_000_000
 
 
-def test_observed_empty_window_differs_from_unobserved_time(conn):
-    """The central distinction. A present row with events_seen=0 means we
-    watched and nothing happened. An absent row means nobody was watching."""
+def test_idle_connection_does_not_publish_observed_empty_windows(conn):
+    """No received frames can mean quiet upstream or a stalled connection."""
     mkrun(conn, "r4")
     now = {"v": int((BASE + 1) * 1_000_000)}
-    acc = Accumulator("r4", bucket_width=WIDTH, grace_s=5, now_us=lambda: now["v"])
+    acc = Accumulator("r4", now_us=lambda: now["v"])
     acc.observe(ev(0))
-    now["v"] = int((BASE + 200) * 1_000_000)  # stream went quiet
+    now["v"] = int((BASE + 200) * 1_000_000)
     acc.tick()
-    flush(conn, acc, "r4")
-
-    rows = conn.execute(
-        "SELECT bucket_start, events_seen FROM window_health "
-        "WHERE run_id='r4' ORDER BY bucket_start"
-    ).fetchall()
-    starts = {r["bucket_start"]: r["events_seen"] for r in rows}
-
-    assert starts.get(BASE) == 1, "observed, non-empty"
-    assert starts.get(BASE + WIDTH) == 0, "observed, empty — row must exist"
-    # A window nobody observed has no row at all, which is a different fact
-    # from a zero count.
-    assert (BASE + 10 * WIDTH) not in starts
+    assert flush(conn, acc, "r4") == []
+    assert conn.execute("SELECT COUNT(*) FROM window_health WHERE run_id='r4'").fetchone()[0] == 0
+    assert db.get_cursor(conn, EP_A) is None
 
 
-def test_empty_observed_window_is_full_coverage_not_a_gap(conn):
+def test_shutdown_after_silence_commits_only_observed_partial_span(conn):
     mkrun(conn, "r5")
     now = {"v": int((BASE + 1) * 1_000_000)}
-    acc = Accumulator("r5", bucket_width=WIDTH, grace_s=5, now_us=lambda: now["v"])
+    acc = Accumulator("r5", now_us=lambda: now["v"])
     acc.observe(ev(0))
-    now["v"] = int((BASE + 200) * 1_000_000)  # stream went quiet
+    acc.observe(ev(20))
+    now["v"] = int((BASE + 200) * 1_000_000)
     acc.tick()
-    closed = {w.bucket_start: w for w in flush(conn, acc, "r5")}
-    empty = closed[BASE + WIDTH]
-    assert empty.events_seen == 0
-    assert empty.gap_us == 0
-    assert empty.partial is False
-    assert empty.observed_duration_us == WIDTH * 1_000_000
+    acc.close_for_shutdown()
+    closed = flush(conn, acc, "r5")
+    assert len(closed) == 1
+    assert closed[0].events_seen == 2
+    assert closed[0].partial is True
+    assert closed[0].observed_duration_us == 20*1_000_000
+    assert db.get_cursor(conn, EP_A) == ev(20).time_us
 
 
 # --- gaps and seams --------------------------------------------------------

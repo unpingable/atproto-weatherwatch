@@ -187,13 +187,16 @@ distinguishes states that are easy to confuse and expensive to confuse:
 | | |
 |---|---|
 | outside a run | **unobserved** — no row exists; nobody was watching, which is not quiet |
-| inside a run, quiet | **observed, empty** — a row exists with `events_seen = 0` |
+| inside a run, no received events | **awaiting stream progress** — wall-clock silence cannot distinguish a quiet source from a stalled connection |
 | inside a run, impaired | **conditioned** — `partial`, `gap`, or `degraded`, flagged on the window |
 
 Nothing is interpolated across unobserved time, no baseline learns from a
 window with a measured completeness defect, and a machine being off between
-runs produces no fake missing windows. A quiet reading means observed quiet;
-a gap says so.
+runs produces no fake missing windows. The collector finalizes windows only when stream
+time advances or shutdown commits a partial observed span. Jetstream provides no completeness
+watermark for silence, so a fresh connection heartbeat does not make stalled aggregates current.
+Existing explicit empty rows remain readable as historical records; this correction does not
+rewrite their counts, coverage or verdicts. A gap says so.
 
 ## How it works
 

@@ -12,11 +12,11 @@ Two rules govern correctness:
 2. **A window closes exactly once**, and its counts, its health row, and the
    resume cursor commit in one transaction.
 
-Windows close either because the stream moved past them (the normal case —
-M0 verified `time_us` strictly increasing, so seeing an event in W+1 proves
-W is complete) or because wall clock passed the boundary plus a grace period
-while the stream was silent. The second path is what makes "observed and
-empty" representable at all.
+Windows normally close because the stream moved past them: M0 verified
+`time_us` strictly increasing, so seeing an event in W+1 establishes that W
+has ended in this observer stream. Wall-clock silence is not a source
+completeness watermark: no window is finalized until stream progression or
+partial shutdown. Historical explicit empty rows remain readable unchanged.
 """
 
 from __future__ import annotations
@@ -31,10 +31,8 @@ from .classify import Classification
 
 LOG = logging.getLogger("weatherwatch.accumulator")
 
-#: How long after a window's end we wait before closing it on wall clock
-#: alone. M0 measured end-to-end lag at p50 -0.002s / max 0.12s, so 5s is
-#: ~40x headroom. Events arriving after this land in `late_events` and are
-#: NOT retroactively added to a committed window.
+#: Historical close grace retained by the current visibility freshness budget.
+#: It does not authorize finalizing a window from wall clock alone.
 LATE_EVENT_GRACE_S = 5.0
 
 DEFAULT_BUCKET_WIDTH_S = 60
@@ -303,32 +301,15 @@ class Accumulator:
         ))
 
     def tick(self) -> None:
-        """Close windows that wall clock has moved past, but only while the
-        stream is idle.
+        """Do not finalize windows from elapsed wall time.
 
-        With events flowing, windows close on stream progression, which is
-        exact. Wall clock is a fallback for silence, and it must not be used
-        while events are still arriving: a lagging consumer has a wall clock
-        far ahead of its stream clock — M0's slow-consumer probe measured a
-        75 s lag with the connection healthy and no events lost — and closing
-        on wall clock there would shut windows that still had events coming
-        and misfile them as `late_events`. Lag is not silence.
+        A receive timeout cannot distinguish a quiet source from a stalled
+        transport or replay. Jetstream supplies no completeness watermark for
+        silence. Closing here would move the window high water beyond the
+        durable event cursor and discard legitimate replay as late arrivals.
+        Stream progression closes windows in observe(); shutdown records only
+        the observed partial span. Runtime heartbeats remain separate facts.
         """
-        now = self._now_us()
-        if self._last_event_wall_us is not None:
-            if now - self._last_event_wall_us < self.grace_us:
-                return  # events still arriving; let the stream close windows
-        while self._open is not None and now >= self._open.window_end_us + self.grace_us:
-            end = self._open.window_end_us
-            self._close_open_window(observed_to_us=end)
-            # Keep marching so silence produces a contiguous run of empty
-            # observed windows rather than one gap.
-            next_start = end // 1_000_000
-            if now >= (next_start + self.bucket_width) * 1_000_000 + self.grace_us:
-                self._open_window(next_start)
-                self._open.observed_from_us = self._open.window_start_us
-            else:
-                break
 
     def discard_open_window(self) -> None:
         """Drop the in-flight window's counts before a reconnect replay.
