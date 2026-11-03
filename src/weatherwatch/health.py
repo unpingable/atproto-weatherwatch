@@ -97,8 +97,13 @@ class ObservationHealth:
     CHECKPOINT_VERSION = 1
     MAX_CHECKPOINT_AGE_S = 3600
 
-    def __init__(self) -> None:
+    def __init__(self, binding: dict | None = None) -> None:
+        """`binding` names what a checkpoint is about: the endpoint and the
+        store. A baseline learned from one relay or one store says nothing
+        about another, so a checkpoint is restored only onto the same
+        binding it was written under."""
         self._lock = threading.Lock()
+        self._binding = dict(binding) if binding is not None else None
         self.reset()
 
     def reset(self) -> None:
@@ -287,6 +292,7 @@ class ObservationHealth:
                 "stream_lag_s": self._stream_lag_s,
                 "windows_seen": self._windows_seen,
                 "checkpoint_at": time.time(),
+                "binding": self._binding,
             }
 
     def restore(self, data: dict) -> bool:
@@ -302,6 +308,17 @@ class ObservationHealth:
         if time.time() - data.get("checkpoint_at", 0) > self.MAX_CHECKPOINT_AGE_S:
             LOG.info("baseline checkpoint stale, cold start")
             return False
+        if self._binding is not None:
+            # A recreated store (or another endpoint) must warm up from its
+            # own stream. Restoring a baseline across that boundary would let
+            # a fresh store skip warm-up and report OK on borrowed history.
+            if self._binding.get("store_id") is None:
+                LOG.info("store identity unknown, baseline not restored")
+                return False
+            if data.get("binding") != self._binding:
+                LOG.info("baseline checkpoint belongs to another store or "
+                         "endpoint, cold start")
+                return False
         baseline = data.get("baseline_eps", 0)
         if baseline <= 0:
             return False

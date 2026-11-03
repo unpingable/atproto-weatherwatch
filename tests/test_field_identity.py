@@ -298,6 +298,7 @@ def test_sealing_memory_does_not_scale_with_the_range(sealed, tmp_path):
     any, holding two copies of the range at once. Both are per-batch now, so
     tripling the range must not triple the peak. The second seal here is a
     re-score of stored windows, which writes nothing (§8, 2026-10-19)."""
+    import gc
     import tracemalloc
 
     _p, _clim, base, _c = _build(sealed, hours=192)
@@ -309,6 +310,10 @@ def test_sealing_memory_does_not_scale_with_the_range(sealed, tmp_path):
         fobs.init(conn)
         fobs.save_observations(conn, obs, "t")
         rescored = [dataclasses_replace_provenance(o) for o in obs]
+        # Start both samples with the same allocator free-list state.
+        # A generation-2 collection clears CPython tuple caches, and can
+        # otherwise happen between these differently sized fixtures.
+        gc.collect()
         tracemalloc.start()
         result = fobs.save_observations(conn, rescored, "t2")
         _cur, peak = tracemalloc.get_traced_memory()

@@ -76,6 +76,7 @@ class _OpenWindow:
     late_events: int = 0
     reconnects: int = 0
     gap_us: int = 0
+    gap_intervals: list[tuple[int, int]] = field(default_factory=list)
     resume_seam: bool = False
     first_event_us: int | None = None
     last_event_us: int | None = None
@@ -142,6 +143,7 @@ class Accumulator:
         # corresponding stream event lands.
         self._pending_reconnects = 0
         self._pending_gap_us = 0
+        self._pending_gap_intervals: list[tuple[int, int]] = []
         self._pending_resume_seam = False
         self._pending_mid_window_start = True  # the run's first window
         self._parse_errors_before_first_window = 0
@@ -153,6 +155,7 @@ class Accumulator:
 
     def note_reconnect(
         self, gap_us: int = 0, resume_seam: bool = False, *, reconnect: bool = True,
+        gap_end_us: int | None = None,
     ) -> None:
         """Record a reconnect. Attributed to the window that receives the
         next event, or to the currently open window if one exists.
@@ -165,14 +168,24 @@ class Accumulator:
 
         A new run can also resume a cursor. Pass reconnect=False to disclose
         its seam and any gap without counting a reconnect inside that run.
+        When gap_end_us is known, only the gap's overlap with the observed
+        span reduces duration. The entire gap remains in the diagnostic ledger.
+        A duration-only signal retains its conservative deduction.
         """
+        gap_us = max(0, gap_us)
+        interval = ((gap_end_us - gap_us, gap_end_us)
+                    if gap_us and gap_end_us is not None else None)
         if self._open is not None:
             self._open.reconnects += int(reconnect)
-            self._open.gap_us += max(0, gap_us)
+            self._open.gap_us += gap_us
+            if interval is not None:
+                self._open.gap_intervals.append(interval)
             self._open.resume_seam = self._open.resume_seam or resume_seam
         else:
             self._pending_reconnects += int(reconnect)
-            self._pending_gap_us += max(0, gap_us)
+            self._pending_gap_us += gap_us
+            if interval is not None:
+                self._pending_gap_intervals.append(interval)
             self._pending_resume_seam = self._pending_resume_seam or resume_seam
 
     def note_parse_error(self) -> None:
@@ -252,6 +265,7 @@ class Accumulator:
         w = _OpenWindow(bucket_start=bucket_start, bucket_width=self.bucket_width)
         w.reconnects = self._pending_reconnects
         w.gap_us = self._pending_gap_us
+        w.gap_intervals = self._pending_gap_intervals
         w.resume_seam = self._pending_resume_seam
         w.entered_mid_window = self._pending_mid_window_start
         if not w.entered_mid_window:
@@ -264,6 +278,7 @@ class Accumulator:
         self._rejected_before_first_window = 0
         self._pending_reconnects = 0
         self._pending_gap_us = 0
+        self._pending_gap_intervals = []
         self._pending_resume_seam = False
         self._pending_mid_window_start = False
         self._open = w
@@ -282,7 +297,19 @@ class Accumulator:
             observed_from = w.window_start_us
         observed_to = min(observed_to_us, w.window_end_us)
         span = max(0, observed_to - observed_from)
-        observed_duration = max(0, span - w.gap_us)
+        # Preserve the full gap ledger, but do not deduct time before a new
+        # run began observing, outside this window, or more than once after
+        # repeated reconnects covering the same missing interval.
+        unlocated_gap_us = w.gap_us - sum(end - start for start, end in w.gap_intervals)
+        overlap_us = 0
+        accounted_to = observed_from
+        for start, end in sorted(w.gap_intervals):
+            start = max(start, observed_from, accounted_to)
+            end = min(end, observed_to)
+            if end > start:
+                overlap_us += end - start
+                accounted_to = end
+        observed_duration = max(0, span - unlocated_gap_us - overlap_us)
         full = self.bucket_width * 1_000_000
 
         self._closed.append(ClosedWindow(
@@ -331,6 +358,7 @@ class Accumulator:
             return
         self._pending_reconnects += w.reconnects
         self._pending_gap_us += w.gap_us
+        self._pending_gap_intervals.extend(w.gap_intervals)
         self._pending_resume_seam = True
         # The reconstructed window is re-entered part-way through only if
         # this one was; a full replay restores the whole window.

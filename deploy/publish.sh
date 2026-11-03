@@ -5,16 +5,26 @@
 # talks to Labelwatch, and does not care whether this script ever succeeds —
 # collection and serving are separate concerns and stay that way.
 #
-# Replacement is atomic at the rename: the incoming tree is staged beside the
-# live one and swapped in, so a reader gets the whole old report or the whole
-# new one, never a half-written mix. This mirrors what Labelwatch already does
-# for its own webroot.
+# The complete incoming tree is staged beside the live one before selection.
+# The two renames can briefly leave the live path absent; readers opening
+# several files across the change can observe different generations. This
+# script does not provide an atomic snapshot across multiple HTTP requests.
 #
 #   ./deploy/publish.sh                       # regenerate + publish (remote)
 #   ./deploy/publish.sh --skip-generate       # publish what is already built
 #   WW_MODE=local ./deploy/publish.sh         # publish on the serving host itself
+#   ./deploy/publish.sh --declare-new-epoch   # publish a shorter history on purpose
 #
-# Two modes, one privacy gate and one atomic-swap discipline:
+# Continuity guard: before the swap, the candidate's history extent is compared
+# with the live site's history/index.json, which is the durable record of what
+# was published, and its summary with the live summary.json, which holds the
+# most recent ~24 hours. A candidate whose history starts later, has fewer days,
+# drops a published day, covers less of the published recent window, or comes
+# from a different observation store is refused, and so is any candidate when
+# the live index or summary cannot be read. --declare-new-epoch (or WW_DECLARE_NEW_EPOCH=1) publishes it
+# anyway with an explicit discontinuity notice on the page and in the JSON.
+#
+# Two modes, one privacy gate and one two-rename replacement procedure:
 #   remote  push rendered output from a workstation over ssh (original path)
 #   local   render and swap on the serving host (used by the systemd timer)
 #
@@ -81,7 +91,17 @@ if [ "$MODE" = "remote" ]; then
   SSH=(ssh -i "$SSH_KEY" -o BatchMode=yes -o ConnectTimeout=10 "$SSH_HOST")
 fi
 
-if [ "${1:-}" != "--skip-generate" ]; then
+SKIP_GENERATE=0
+DECLARE_NEW_EPOCH="${WW_DECLARE_NEW_EPOCH:-0}"
+for arg in "$@"; do
+  case "$arg" in
+    --skip-generate) SKIP_GENERATE=1 ;;
+    --declare-new-epoch) DECLARE_NEW_EPOCH=1 ;;
+    *) echo "!! unknown argument: $arg" >&2; exit 1 ;;
+  esac
+done
+
+if [ "$SKIP_GENERATE" != "1" ]; then
   echo "==> Rendering from $DB"
   "${RENDER[@]}" --db "$DB" report --output "$BUILD" \
       ${SOCIAL_DB:+--social-db "$SOCIAL_DB"} \
@@ -89,6 +109,27 @@ if [ "${1:-}" != "--skip-generate" ]; then
 fi
 
 [ -f "$BUILD/index.html" ] || { echo "!! no $BUILD/index.html" >&2; exit 1; }
+
+echo "==> Continuity guard"
+# The live index and summary are fetched to local files; a failed fetch leaves
+# no file, which the guard reads as "continuity unknown", never as "clean".
+PUBLISHED_INDEX="$(mktemp)"
+PUBLISHED_SUMMARY="$(mktemp)"
+trap 'rm -f "$PUBLISHED_INDEX" "$PUBLISHED_SUMMARY"' EXIT
+fetch_live() {  # fetch_live <path under the live root> <local file>
+  if [ "$MODE" = "local" ]; then
+    cp "$TARGET/$1" "$2" 2>/dev/null || rm -f "$2"
+  else
+    "${SSH[@]}" "cat '$REMOTE/$1'" > "$2" || rm -f "$2"
+  fi
+}
+fetch_live history/index.json "$PUBLISHED_INDEX"
+fetch_live summary.json "$PUBLISHED_SUMMARY"
+EPOCH_ARGS=()
+if [ "$DECLARE_NEW_EPOCH" = "1" ]; then EPOCH_ARGS=(--declare-new-epoch); fi
+"${RENDER[@]}" publish-continuity --report-dir "$BUILD" \
+    --published-index "$PUBLISHED_INDEX" \
+    --published-summary "$PUBLISHED_SUMMARY" ${EPOCH_ARGS[@]+"${EPOCH_ARGS[@]}"}
 
 echo "==> Privacy gate"
 # The supported CLI owns the same deterministic gate used by `status`.  It
@@ -102,7 +143,7 @@ if [ "$MODE" = "local" ]; then
   echo "==> Staging to $STAGE"
   rm -rf "$STAGE"; mkdir -p "$STAGE"
   cp -a "$BUILD/." "$STAGE/"
-  echo "==> Atomic swap"
+  echo "==> Replace publication directory"
   rm -rf "$PREV"
   # NB: an `[ -d ] && mv` one-liner would abort under `set -e` on first run,
   # when the target does not exist yet.
@@ -117,7 +158,7 @@ else
   "${SSH[@]}" "rm -rf '$STAGE' && mkdir -p '$STAGE'"
   rsync -a --delete -e "ssh -i $SSH_KEY -o BatchMode=yes" "$BUILD/" "$SSH_HOST:$STAGE/"
 
-  echo "==> Atomic swap"
+  echo "==> Replace publication directory"
   "${SSH[@]}" "set -e
     rm -rf '$PREV'
     if [ -d '$REMOTE' ]; then mv '$REMOTE' '$PREV'; fi

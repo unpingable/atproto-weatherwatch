@@ -104,7 +104,10 @@ class Collector:
         self.social_sink = social_sink
 
         self.run_id = new_run_id()
-        self.health = ObservationHealth()
+        self.health = ObservationHealth(binding={
+            "endpoint": endpoint,
+            "store_id": db.get_meta(conn, db.STORE_ID_KEY),
+        })
         self.acc = Accumulator(self.run_id, bucket_width=bucket_width)
 
         self._stop = False
@@ -312,6 +315,7 @@ class Collector:
                     )
                     self.acc.note_reconnect(
                         gap_us=gap, resume_seam=True, reconnect=self._reconnects > 0,
+                        gap_end_us=c.time_us,
                     )
                 else:
                     self.acc.note_reconnect(

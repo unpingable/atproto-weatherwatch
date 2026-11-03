@@ -3,7 +3,9 @@
 What `weatherwatch.neutral.zone` publishes, what a consumer may rely on, and
 which of those guarantees exist to protect the reader rather than the server.
 
-Status: current as of 2026-08-26. Inherits every boundary in
+Source contract updated 2026-11-03; deployed behavior depends on the selected
+release. Recovery and publication continuity are specified in
+[`../DATA-CONTRACT.md`](../DATA-CONTRACT.md). Inherits every boundary in
 [`../src/weatherwatch/social/BOUNDARIES.md`](../src/weatherwatch/social/BOUNDARIES.md)
 and the field decisions in
 [`../src/weatherwatch/social/field/DECISIONS.md`](../src/weatherwatch/social/field/DECISIONS.md).
@@ -67,18 +69,20 @@ the unit `interval` discloses.
 bytes — sorted keys, fixed separators, and deliberately **no `generated_at`
 inside a day file**, so an unchanged day is not rewritten and its `mtime` does
 not churn on a five-minute publish cadence. A *closed* day can still change:
-the collector accepts late events and a window can be re-observed by a later
-run. Rather than promise immutability the pipeline cannot keep, each day
+later runs can contribute additional observations to the same day. Events
+behind a run's committed window high water are counted as late and do not
+change its committed counts. Each day
 carries a `digest` and the index republishes it, so a change is detectable.
 
-**A view, not a vault.** The rendered tree is rebuilt and swapped atomically on
-every publish, so the archive's extent is the *observation store's* extent. If
-windows leave the store, their day files stop being written and the index stops
-listing them. This is stated rather than hidden, and it is deliberately not
-solved here: making published history outlive the store is a retention decision
-about public artifacts, and retention is owned separately. What is guaranteed
-and tested is narrower — the recent/archive split loses nothing, and any
-shrinkage is visible in `day_count` and `first_archived_day`.
+**A view, not a vault.** Every publish rebuilds and replaces the rendered tree
+using two renames, which can briefly leave the live path absent. The archive's
+extent is the *observation store's* extent. If
+windows leave the store, a freshly rendered candidate can have fewer day
+files. The publication continuity guard refuses to replace the live site
+with that candidate silently. A shorter history, changed store or unknown
+published baseline requires an explicit new-epoch declaration and a carried
+discontinuity notice. This preserves honesty about loss; it does not provide
+a backup or retain observations absent from the source store.
 
 **Absent or corrupt.** The index lists only days written *and read back* in the
 run that produced it. A day that failed to serialise is recorded in `problems`
@@ -104,6 +108,19 @@ way to detect any change at all. Treat its absence as v1.
 A consumer that needs the full span should read `history.index` and page
 through the days. A consumer that only needs current conditions should read
 `conditions` and `freshness` and ignore `windows` entirely.
+
+The summary also carries `store`: its opaque store identity, creation or
+identity-assignment provenance, `history_begins_at` and an explicit statement
+that earlier history is unknown. This is observation-store lineage, not an
+account identity or evidence of uninterrupted collection. Losing the store
+creates a new identity and requires a fresh baseline.
+
+An operator-declared publication discontinuity is carried in
+`summary.history.discontinuities`, `history/index.json`'s `discontinuities`
+and a visible page banner. Subsequent guarded publishes retain those notices.
+The guard compares archived day presence and recent observed duration; it
+does not verify every historical count. See the data contract for the exact
+comparison budget and remaining limits.
 
 ## 5. Precision and privacy invariants
 

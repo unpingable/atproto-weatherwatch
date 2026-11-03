@@ -19,7 +19,7 @@ import urllib.parse
 import pytest
 import websockets
 
-from weatherwatch import db, read, timeutil, visibility
+from weatherwatch import db, query, read, timeutil, visibility
 from weatherwatch.accumulator import Accumulator
 from weatherwatch.collector import Collector
 
@@ -346,9 +346,13 @@ def test_restart_recovers_cursor_behind_historical_empty_windows(conn):
     assert after == before
 
 
-@pytest.mark.parametrize("resume_offset_s", [1, 180])
+@pytest.mark.parametrize("resume_offset_s, gap_us, observed_us, partial", [
+    (1, 0, 59_000_000, 1),
+    (180, 179_999_999, 60_000_000, 0),
+    (190, 189_999_999, 50_000_000, 1),
+])
 def test_first_connection_with_cursor_discloses_resume_without_a_reconnect(
-    conn, resume_offset_s,
+    conn, resume_offset_s, gap_us, observed_us, partial,
 ):
     endpoint = 'wss://relay.invalid/resume'
     first = Collector(conn=conn, endpoint=endpoint)
@@ -367,11 +371,45 @@ def test_first_connection_with_cursor_discloses_resume_without_a_reconnect(
     resumed._handle_raw(envelope((BASE+resume_offset_s)*1_000_000, 1))
     resumed._handle_raw(envelope((BASE+resume_offset_s+61)*1_000_000, 2))
     resumed._flush_pending()
-    row = conn.execute('SELECT gap_us, resume_seam, reconnects FROM window_health WHERE run_id=?',
+    row = conn.execute('SELECT gap_us, resume_seam, reconnects, observed_duration_us, partial '
+                       'FROM window_health WHERE run_id=?',
                        (resumed.run_id,)).fetchone()
-    assert row['gap_us'] == (180*1_000_000-1 if resume_offset_s == 180 else 0)
+    assert row['gap_us'] == gap_us
     assert row['resume_seam'] == 1
     assert row['reconnects'] == 0
+    assert row['observed_duration_us'] == observed_us
+    assert row['partial'] == partial
+    point = query.series(conn, [resumed.run_id], 'post.create').points[0]
+    assert point.observed_duration_us == observed_us
+    if gap_us:
+        assert 'gap' in point.flags
+        assert not point.baseline_eligible
+
+
+def test_reconnect_deducts_only_the_missing_interval_inside_its_window(conn):
+    endpoint = 'wss://relay.invalid/overlapping-gap'
+    collector = Collector(conn=conn, endpoint=endpoint)
+    collector._start_run()
+    collector._build_url()
+    for i, offset in enumerate((-59, -1, 1)):
+        collector._handle_raw(envelope((BASE + offset) * 1_000_000, i))
+        collector._flush_pending()
+    assert db.get_cursor(conn, endpoint) == (BASE - 1) * 1_000_000
+    collector.acc.discard_open_window()
+    collector._reconnects = 1
+    collector._build_url()
+    collector._handle_raw(envelope((BASE + 20) * 1_000_000, 3))
+    collector._handle_raw(envelope((BASE + 61) * 1_000_000, 4))
+    collector._flush_pending()
+    row = conn.execute(
+        'SELECT * FROM window_health WHERE run_id=? AND bucket_start=?',
+        (collector.run_id, BASE)).fetchone()
+    # The gap starts just after the preceding minute's last durable event.
+    # Its ledger includes that earlier second; this window deducts only 0..20.
+    assert row['gap_us'] == 20_999_999
+    assert row['observed_duration_us'] == 40_000_000
+    assert row['partial'] == 1
+    assert row['reconnects'] == row['resume_seam'] == 1
 
 
 @pytest.mark.parametrize("reconnect", [False, True])
