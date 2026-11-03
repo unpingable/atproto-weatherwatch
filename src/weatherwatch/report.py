@@ -1234,8 +1234,7 @@ def _section_conditions(conn, run_ids, series_map, totals_series) -> str:
         s = _card_series(series_map, spec)
         if s is None or not s.observed_points:
             continue
-        deps = derive.rolling_departures(s)
-        last = next((d for d in reversed(deps) if d.value is not None), None)
+        last = derive.latest_departure(s)
         if last is None:
             continue
         colour = CONDITION_COLORS.get(last.condition, "var(--muted)")
@@ -1250,8 +1249,7 @@ def _section_conditions(conn, run_ids, series_map, totals_series) -> str:
             f"<td class='num'>{last.baseline_n}</td></tr>"
         )
 
-    total_dep = derive.rolling_departures(totals_series)
-    tlast = next((d for d in reversed(total_dep) if d.value is not None), None)
+    tlast = derive.latest_departure(totals_series)
     total_line = (
         f"All events {_fmt(tlast.value, 1)}/s · baseline {_fmt(tlast.baseline_mean, 1)}/s"
         f" · z {_fmt(tlast.z, 2)} · <span class='pill' "
@@ -1662,8 +1660,7 @@ def _build_html(conn, run_ids, runs, latest, series_map, totals_series,
         quality_counts[point.quality] = quality_counts.get(point.quality, 0) + 1
     dominant = max(quality_counts.items(), key=lambda kv: kv[1], default=("—", 0))
 
-    total_dep = derive.rolling_departures(totals_series)
-    tlast = next((d for d in reversed(total_dep) if d.value is not None), None)
+    tlast = derive.latest_departure(totals_series)
     c_hint = (f"all events {_fmt(tlast.value, 1)}/s against a "
               f"{_fmt(tlast.baseline_mean, 1)}/s baseline · {tlast.condition}"
               if tlast else "baseline too short to compare against")

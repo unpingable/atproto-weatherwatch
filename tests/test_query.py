@@ -11,6 +11,33 @@ EP_A = "wss://relay-a.invalid/subscribe"
 EP_B = "wss://relay-b.invalid/subscribe"
 
 
+def test_retained_window_points_fit_report_allocation_budget():
+    """Per-point overhead must leave room for all 19 full-history views.
+
+    This 20k sample budgets 180 bytes per retained point, including its
+    timestamp and list slot. At the 200k report cap the same representation
+    is retained for health, total events and 17 metrics (684 MB total).
+    Full-report peak measurements additionally cover SQL scalars/rendering.
+    """
+    import tracemalloc
+
+    flags = frozenset()
+    tracemalloc.start()
+    try:
+        before = tracemalloc.get_traced_memory()[0]
+        points = [query.WindowPoint(
+            bucket_start=1_700_000_040 + i * 60, bucket_width=60,
+            count=100, events_seen=1000, observed_duration_us=60_000_000,
+            flags=flags, coverage_state="ok", run_id="r1",
+            lag_ewma_s=0.01, lag_max_s=0.02,
+        ) for i in range(20_000)]
+        retained = tracemalloc.get_traced_memory()[0] - before
+        assert len(points) == 20_000
+        assert retained < 180 * len(points), retained
+    finally:
+        tracemalloc.stop()
+
+
 def w(count=100, **kw):
     kw.setdefault("metrics", {"post.create": count})
     return kw

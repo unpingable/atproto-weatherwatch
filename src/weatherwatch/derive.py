@@ -221,6 +221,45 @@ def rolling_departures(
     return out
 
 
+def latest_departure(
+    s: Series,
+    n: int = DEFAULT_BASELINE_N,
+    min_samples: int = MIN_BASELINE_SAMPLES,
+) -> Departure | None:
+    """The last valued departure, without materializing every older row.
+
+    Only the last reading and its preceding eligible baseline are needed.
+    Walk backwards to find them, then restore chronological order before
+    computing statistics so floating-point results match rolling_departures.
+    Partial or otherwise ineligible readings can still be the latest value;
+    they just cannot teach the baseline of a later reading.
+    """
+    if n <= 0:
+        raise ValueError("baseline length must be positive")
+    points = reversed(s.points)
+    current = next((p for p in points if p.rate is not None), None)
+    if current is None:
+        return None
+    baseline = []
+    for point in points:
+        if point.baseline_eligible and point.rate is not None:
+            baseline.append(point.rate)
+            if len(baseline) == n:
+                break
+    baseline.reverse()
+    bmean = mean(baseline) if len(baseline) >= min_samples else None
+    bstd = stddev(baseline) if len(baseline) >= min_samples else None
+    value = current.rate
+    z = zscore(value, bmean, bstd)
+    pc = pct_change(value, bmean)
+    return Departure(
+        bucket_start=current.bucket_start, value=value,
+        baseline_mean=bmean, baseline_std=bstd, baseline_n=len(baseline),
+        z=z, pct_change=pc, condition=condition(z, pc),
+        eligible=current.baseline_eligible, quality=current.quality,
+    )
+
+
 # --- ratio series ----------------------------------------------------------
 
 @dataclass(frozen=True)

@@ -155,6 +155,92 @@ def test_every_point_gets_a_departure_row(conn):
     assert len(derive.rolling_departures(s)) == len(s.points) == 3
 
 
+def test_latest_departure_keeps_last_value_and_eligible_history(conn):
+    """Trailing holes don't replace a real reading or teach its baseline."""
+    from dataclasses import replace
+
+    build_run(conn, "r1", [
+        w(60), w(120),
+        w(6000, coverage_state="degraded", gate_reasons="low_eps"),
+        None, w(180, resume_seam=1),
+        w(240, coverage_state="degraded", gate_reasons="lag_high"),
+        w(150, observed_us=30_000_000), None, w(60),
+    ])
+    series = query.series(conn, ["r1"], "post.create")
+    # End with the genuine hole, without asking SQL densification to invent
+    # an observation past its last recorded row.
+    series = replace(series, points=series.points[:-1])
+    last = derive.latest_departure(series, n=3, min_samples=2)
+    assert last.bucket_start == series.points[6].bucket_start
+    assert last.value == 5.0  # partial:150 /30s, not150 /60s
+    assert last.baseline_n == 3
+    assert last.baseline_mean == 3.0  # eligible rates2,3,4
+    assert last.baseline_std == 1.0
+    assert last.z == 2.0
+    assert last.pct_change == pytest.approx(2 / 3)
+    assert last.condition == "elevated"
+    assert last.eligible is False
+    assert last.quality == "partial"
+
+
+@pytest.mark.parametrize("counts,minimum,value,baseline_n,baseline", [
+    ([], 2, None, None, None),
+    ([0], 2, 0.0, 0, None),
+    ([60, 120], 2, 2.0, 1, None),
+    ([60, 120], 1, 2.0, 1, 1.0),
+])
+def test_latest_departure_empty_zero_and_short_baseline(
+        conn, counts, minimum, value, baseline_n, baseline):
+    from dataclasses import replace
+
+    build_run(conn, "r1", [w(c) for c in counts] or [w(60)])
+    series = query.series(conn, ["r1"], "post.create")
+    if not counts:
+        series = replace(series, points=())
+    last = derive.latest_departure(series, n=3, min_samples=minimum)
+    if not counts:
+        assert last is None
+    else:
+        assert last.value == value
+        assert last.baseline_n == baseline_n
+        assert last.baseline_mean == baseline
+        assert last.baseline_std is None
+        assert last.condition == "unknown"
+
+
+def test_latest_departure_matches_full_history_at_each_prefix(conn):
+    """Cross-check all fields while the independent cases fix the semantics."""
+    from dataclasses import replace
+
+    build_run(conn, "r1", [
+        w(60 + i, **({"gap_us": 5_000_000} if i % 11 == 0 else {}))
+        if i % 7 else None for i in range(90)
+    ])
+    series = query.series(conn, ["r1"], "post.create")
+    for size in range(len(series.points) + 1):
+        prefix = replace(series, points=series.points[:size])
+        expected = next((d for d in reversed(derive.rolling_departures(
+            prefix, n=10, min_samples=5)) if d.value is not None), None)
+        assert derive.latest_departure(prefix, n=10, min_samples=5) == expected
+
+
+def test_latest_departure_returns_none_when_every_point_is_unobserved(conn):
+    from dataclasses import replace
+
+    build_run(conn, "r1", [w(60), None, w(60)])
+    series = query.series(conn, ["r1"], "post.create")
+    assert derive.latest_departure(replace(
+        series, points=(series.points[1],))) is None
+
+
+@pytest.mark.parametrize("length", [0, -1])
+def test_latest_departure_refuses_nonpositive_baseline_length(conn, length):
+    build_run(conn, "r1", [w(60)])
+    with pytest.raises(ValueError, match="baseline length must be positive"):
+        derive.latest_departure(query.series(conn, ["r1"], "post.create"),
+                                n=length)
+
+
 # --- ratio series ----------------------------------------------------------
 
 def test_ratio_series_aligns_by_bucket_and_guards_zero(conn):

@@ -95,7 +95,7 @@ class QueryTooLarge(ValueError):
     """
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class WindowPoint:
     """One bucket of one metric, with everything needed to condition it."""
 

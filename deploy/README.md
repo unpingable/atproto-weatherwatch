@@ -63,6 +63,16 @@ configuration.
 - `deploy/beef-route.caddy` documents the old path-matcher footgun; it is an
   illustrative fragment, not a complete live configuration.
 
+The report retains the complete compatible observation interval, up to its
+200,000-window query guard. Compact immutable window points reduce retained
+memory; the displayed latest baseline reads only that observation and its
+preceding eligible windows. These changes preserve the full metric totals,
+quality flags, baseline rules and daily archive. They do not shorten public
+history or raise the publisher's memory limit or timeout. Offline aggregate
+measurements exclude the configured social archive and shared-host pressure;
+verify an actual guarded publication and its served generation time after
+deployment. An available old page does not establish publication freshness.
+
 Review unit paths, user/group names, resource limits, the endpoint, and the
 webroot for the target environment before installation. Validate changes in a
 staging environment when the web tier is shared with other sites.
