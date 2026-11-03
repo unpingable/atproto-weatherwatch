@@ -310,9 +310,13 @@ class Collector:
                         "resume landed %.1fs past the requested cursor — "
                         "treating as a gap, not a clean seam", gap / 1_000_000,
                     )
-                    self.acc.note_reconnect(gap_us=gap, resume_seam=True)
+                    self.acc.note_reconnect(
+                        gap_us=gap, resume_seam=True, reconnect=self._reconnects > 0,
+                    )
                 else:
-                    self.acc.note_reconnect(gap_us=0, resume_seam=True)
+                    self.acc.note_reconnect(
+                        gap_us=0, resume_seam=True, reconnect=self._reconnects > 0,
+                    )
 
         self.health.record_event_time(c.time_us)
         self.acc.observe(c)

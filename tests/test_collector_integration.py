@@ -12,13 +12,15 @@ No network. No real Bluesky data.
 from __future__ import annotations
 
 import asyncio
+import datetime as dt
 import json
 import urllib.parse
 
 import pytest
 import websockets
 
-from weatherwatch import db, read
+from weatherwatch import db, read, timeutil, visibility
+from weatherwatch.accumulator import Accumulator
 from weatherwatch.collector import Collector
 
 WIDTH = 60
@@ -344,7 +346,10 @@ def test_restart_recovers_cursor_behind_historical_empty_windows(conn):
     assert after == before
 
 
-def test_first_connection_with_cursor_reports_unavailable_resume_interval(conn):
+@pytest.mark.parametrize("resume_offset_s", [1, 180])
+def test_first_connection_with_cursor_discloses_resume_without_a_reconnect(
+    conn, resume_offset_s,
+):
     endpoint = 'wss://relay.invalid/resume'
     first = Collector(conn=conn, endpoint=endpoint)
     first._start_run()
@@ -357,12 +362,125 @@ def test_first_connection_with_cursor_reports_unavailable_resume_interval(conn):
     resumed = Collector(conn=conn, endpoint=endpoint)
     resumed._start_run()
     resumed._build_url()
-    # Relay can no longer replay the requested interval; its first event is
-    # three minutes newer. A fresh run must disclose the gap just like reconnect.
-    resumed._handle_raw(envelope((BASE+180)*1_000_000, 1))
-    resumed._handle_raw(envelope((BASE+241)*1_000_000, 2))
+    # A clean resume and a relay that no longer retains the requested interval
+    # both disclose the run seam, without inventing an in-run reconnect.
+    resumed._handle_raw(envelope((BASE+resume_offset_s)*1_000_000, 1))
+    resumed._handle_raw(envelope((BASE+resume_offset_s+61)*1_000_000, 2))
     resumed._flush_pending()
     row = conn.execute('SELECT gap_us, resume_seam, reconnects FROM window_health WHERE run_id=?',
                        (resumed.run_id,)).fetchone()
-    assert row['gap_us'] == 180*1_000_000-1
+    assert row['gap_us'] == (180*1_000_000-1 if resume_offset_s == 180 else 0)
     assert row['resume_seam'] == 1
+    assert row['reconnects'] == 0
+
+
+@pytest.mark.parametrize("reconnect", [False, True])
+def test_receive_timeout_keeps_windows_replayable_and_aggregates_stale(
+    conn, tmp_path, monkeypatch, reconnect,
+):
+    """Exercise real recv timeouts, SQLite, status, and inclusive cursor replay."""
+    clock = [(BASE + 40) * 1_000_000]
+    monkeypatch.setattr(timeutil, "now_iso", lambda: timeutil.us_to_iso(clock[0]))
+    monkeypatch.setattr("weatherwatch.collector.RECONNECT_BACKOFF_START_S", 0.001)
+
+    async def run():
+        connections = asyncio.Queue()
+        handled = asyncio.Queue()
+        release = asyncio.Event()
+        idle = asyncio.Event()
+
+        async def handler(ws, path=None):
+            path = (path or getattr(getattr(ws, "request", None), "path", None)
+                    or getattr(ws, "path", ""))
+            await connections.put((ws, path))
+            await release.wait()
+
+        async with websockets.serve(handler, "127.0.0.1", 0) as server:
+            port = server.sockets[0].getsockname()[1]
+            endpoint = f"ws://127.0.0.1:{port}/subscribe"
+            collector = Collector(conn=conn, endpoint=endpoint)
+            collector.acc = Accumulator(collector.run_id, now_us=lambda: clock[0])
+            handle_raw = collector._handle_raw
+            tick = collector.acc.tick
+
+            def handle(raw):
+                handle_raw(raw)
+                handled.put_nowait(collector.acc.last_event_us)
+
+            def tick_and_signal():
+                tick()
+                if clock[0] == (BASE + 200) * 1_000_000:
+                    idle.set()
+
+            monkeypatch.setattr(collector, "_handle_raw", handle)
+            monkeypatch.setattr(collector.acc, "tick", tick_and_signal)
+
+            async def send(ws, offsets):
+                for offset in offsets:
+                    stamp = (BASE + offset) * 1_000_000
+                    await ws.send(envelope(stamp, offset))
+                    assert await asyncio.wait_for(handled.get(), 2) == stamp
+
+            task = asyncio.create_task(collector.run())
+            try:
+                ws, _ = await asyncio.wait_for(connections.get(), 2)
+                await send(ws, [-59, -1, 1, 20, 40])
+                cursor = (BASE - 1) * 1_000_000
+                assert db.get_cursor(conn, endpoint) == cursor
+                before = [tuple(row) for row in conn.execute(
+                    "SELECT * FROM window_health ORDER BY bucket_start")]
+
+                # No more frames arrive, but the loop is alive. A genuine
+                # recv timeout must not commit any part of the next minutes.
+                clock[0] = (BASE + 200) * 1_000_000
+                await asyncio.wait_for(idle.wait(), 3)
+                assert [tuple(row) for row in conn.execute(
+                    "SELECT * FROM window_health ORDER BY bucket_start")] == before
+                assert db.get_cursor(conn, endpoint) == cursor
+                runtime = json.loads(db.get_meta(conn, visibility.RUNTIME_META_KEY))
+                assert runtime["state"] == "connected"
+
+                # Publish a fresh heartbeat through the real runtime writer.
+                # It must not refresh the useful aggregate timestamp.
+                collector._record_runtime("connected")
+                runtime = json.loads(db.get_meta(conn, visibility.RUNTIME_META_KEY))
+                assert runtime["last_frame_at"] == timeutil.us_to_iso(
+                    (BASE + 40) * 1_000_000)
+                path = conn.execute("PRAGMA database_list").fetchone()["file"]
+                status = visibility.build_status(
+                    path, tmp_path / "report",
+                    now=dt.datetime.fromtimestamp(BASE + 200, dt.timezone.utc))
+                concerns = {item["id"]: item["observation"]
+                            for item in status["concerns"]}
+                assert concerns["weatherwatch.acquisition.connection"]["local_state"] == "PRESENT"
+                for name in ("weatherwatch.aggregate.production",
+                             "weatherwatch.acquisition.cursor",
+                             "weatherwatch.observation.coverage"):
+                    assert concerns[name]["local_state"] == "STALE"
+                    assert concerns[name]["observed_at"] == "2023-11-14T22:14:00Z"
+
+                if reconnect:
+                    await ws.close(code=1011, reason="stalled fixture connection")
+                    ws, path = await asyncio.wait_for(connections.get(), 3)
+                    query = urllib.parse.parse_qs(urllib.parse.urlparse(path).query)
+                    assert query == {"cursor": [str(cursor + 1)]}
+                    await send(ws, [1, 20, 40])
+                await send(ws, [41, 50, 59, 61])
+                window = conn.execute(
+                    "SELECT * FROM window_health WHERE run_id=? AND bucket_start=?",
+                    (collector.run_id, BASE)).fetchone()
+                assert window["events_seen"] == 6
+                assert window["late_events"] == 0
+                assert window["partial"] == 0
+                assert window["observed_duration_us"] == WIDTH * 1_000_000
+                assert window["resume_seam"] == int(reconnect)
+                assert window["reconnects"] == int(reconnect)
+                assert db.get_cursor(conn, endpoint) == (BASE + 59) * 1_000_000
+            finally:
+                collector.stop()
+                try:
+                    await asyncio.wait_for(task, 5)
+                finally:
+                    release.set()
+
+    asyncio.run(run())

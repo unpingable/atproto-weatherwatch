@@ -151,7 +151,9 @@ class Accumulator:
 
     # -- signals from the collector ---------------------------------------
 
-    def note_reconnect(self, gap_us: int = 0, resume_seam: bool = False) -> None:
+    def note_reconnect(
+        self, gap_us: int = 0, resume_seam: bool = False, *, reconnect: bool = True,
+    ) -> None:
         """Record a reconnect. Attributed to the window that receives the
         next event, or to the currently open window if one exists.
 
@@ -160,13 +162,16 @@ class Accumulator:
         reconnect that lost ~5,000 events: monotonicity is not evidence of
         completeness, so the seam is recorded structurally rather than
         inferred from the clock.
+
+        A new run can also resume a cursor. Pass reconnect=False to disclose
+        its seam and any gap without counting a reconnect inside that run.
         """
         if self._open is not None:
-            self._open.reconnects += 1
+            self._open.reconnects += int(reconnect)
             self._open.gap_us += max(0, gap_us)
             self._open.resume_seam = self._open.resume_seam or resume_seam
         else:
-            self._pending_reconnects += 1
+            self._pending_reconnects += int(reconnect)
             self._pending_gap_us += max(0, gap_us)
             self._pending_resume_seam = self._pending_resume_seam or resume_seam
 

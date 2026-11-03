@@ -188,6 +188,7 @@ distinguishes states that are easy to confuse and expensive to confuse:
 |---|---|
 | outside a run | **unobserved** — no row exists; nobody was watching, which is not quiet |
 | inside a run, no received events | **awaiting stream progress** — wall-clock silence cannot distinguish a quiet source from a stalled connection |
+| inside a run, a whole minute skipped by later stream time | **unobserved** — no row is invented for the skipped minute |
 | inside a run, impaired | **conditioned** — `partial`, `gap`, or `degraded`, flagged on the window |
 
 Nothing is interpolated across unobserved time, no baseline learns from a
