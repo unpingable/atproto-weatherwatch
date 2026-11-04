@@ -430,10 +430,12 @@ def test_coverage_denominator_uses_span_not_summed_window_widths(conn, tmp_path)
 
     assert len(summary["windows"]) == 3, "three health rows across two runs"
     assert interval["span_seconds"] == 120, "but only two minutes of wall time"
-    assert interval["observed_seconds"] == pytest.approx(120.0)
-    assert interval["coverage_ratio"] == pytest.approx(1.0), (
-        "the shared minute is fully observed between the two runs"
-    )
+    # Event bounds do not locate duration coverage. The duration-only record
+    # cannot distinguish adjacent pieces from overlapping pieces.
+    assert interval["observed_seconds"] is None
+    assert interval["coverage_ratio"] is None
+    assert interval["observed_seconds_lower"] == 100
+    assert interval["observed_seconds_upper"] == 120
 
 
 # --- presentation hygiene (M7 cleanup campaign) ----------------------------

@@ -1,0 +1,344 @@
+{
+  "schema": "weatherwatch.summary/v2",
+  "interval": {
+    "first_bucket_start": 1700000040,
+    "last_bucket_end": 1700000340,
+    "span_seconds": 300,
+    "observed_seconds": null,
+    "coverage_ratio": null,
+    "observed_seconds_lower": 220.0,
+    "observed_seconds_upper": 240.0,
+    "coverage_ratio_lower": 0.7333333333333333,
+    "coverage_ratio_upper": 0.8,
+    "coverage_status": "bounded",
+    "recorded_observed_seconds": 320.0,
+    "multi_piece_buckets": 2,
+    "uncertain_buckets": 1
+  },
+  "generated_at": "2026-11-04T00:20:50.998729Z",
+  "store": {
+    "store_id": "store-bbc21042adae2d7e",
+    "store_created_at": "2026-11-04T00:20:50.996951+00:00",
+    "identity_origin": "created",
+    "history_begins_at": "2026-11-04T00:20:50.996951+00:00",
+    "earlier_history": "unknown",
+    "note": "History begins here; earlier history unknown. This store records nothing from before it was created, and a store that is lost and recreated starts a new history with a new identity."
+  },
+  "freshness": {
+    "state": "stale",
+    "newest_observation_end": "2023-11-14T22:19:00Z",
+    "newest_complete_observation_end": "2023-11-14T22:19:00Z",
+    "age_seconds": 93751310.99872899,
+    "current_threshold_seconds": 660,
+    "basis": "provisional: two 5-minute publication intervals plus one source bucket"
+  },
+  "conditions": {
+    "state": "station_offline",
+    "label": "Station offline",
+    "icon": "\ud83d\udce1",
+    "sentence": "No current measurement is available from the instrument.",
+    "headline": "Station offline",
+    "universal_not_observed": "user intent, emotional state, correctness, coordination, culpability, or geographic origin",
+    "plain": "No current measurement is available from the instrument. This report was generated without a field observation store, so no conditions can be read.",
+    "criteria": "The instrument produced no reading, or its most recent complete reading is more than 15 windows old.",
+    "reasons": [],
+    "confidence": "unsupported",
+    "confidence_plain": "This says nothing about network conditions. It says the instrument is not reporting.",
+    "persistence_windows": 0,
+    "pairings": [],
+    "as_of": "",
+    "cannot_see": [
+      "How many people are involved, or how many are new. The counters aggregate events, not accounts, so participant turnover is unavailable by construction rather than unimplemented.",
+      "What is being said. Record bodies are discarded before storage.",
+      "Where anyone is. The protocol exposes no location and none is inferred.",
+      "Who did anything. No actor or target is retained at any point."
+    ]
+  },
+  "latest_finding": {
+    "finding_id": "weatherwatch.finding.observer-divergence.2026-08",
+    "slug": "observer-divergence-2026-08",
+    "status": "published",
+    "published_month": "2026-08",
+    "headline": "Jetstream observers disagree.",
+    "display_result": "1.61\u00d7",
+    "path": "findings/observer-divergence-2026-08/"
+  },
+  "collector_version": "0.1.0",
+  "claim": "Aggregate activity observed from this Jetstream source during the stated observation interval.",
+  "measures": "rates of aggregate ATProto events (posts, likes, follows, blocks, deletes, account/identity events) and the health of the observation itself",
+  "does_not_measure": [
+    "conflict or disputes",
+    "sentiment or affect",
+    "individual users",
+    "post content or text",
+    "the social graph",
+    "any identity",
+    "reads, impressions, or lurkers",
+    "private messages or reports",
+    "client-side mutes",
+    "actual audience, attention, or engagement"
+  ],
+  "source_endpoint": "wss://relay-a.invalid/subscribe",
+  "runs": [
+    {
+      "run_id": "r1",
+      "status": "complete",
+      "started_at": "2026-01-01T00:00:00+00:00",
+      "ended_at": "2026-01-01T03:00:00Z",
+      "stop_reason": "completed",
+      "windows": 2,
+      "partial_windows": 0,
+      "degraded_windows": 0,
+      "lagged_windows": 0,
+      "seam_windows": 0,
+      "gap_us": 0,
+      "reconnects": 0,
+      "events": 20,
+      "observed_duration_us": 120000000,
+      "nominal_duration_us": 120000000,
+      "replayed_from_cursor": false
+    },
+    {
+      "run_id": "r2",
+      "status": "partial",
+      "started_at": "2026-01-01T01:00:00Z",
+      "ended_at": "2026-01-01T03:00:00Z",
+      "stop_reason": "completed",
+      "windows": 2,
+      "partial_windows": 1,
+      "degraded_windows": 1,
+      "lagged_windows": 0,
+      "seam_windows": 1,
+      "gap_us": 20000000,
+      "reconnects": 0,
+      "events": 20,
+      "observed_duration_us": 100000000,
+      "nominal_duration_us": 120000000,
+      "replayed_from_cursor": true
+    },
+    {
+      "run_id": "r3",
+      "status": "complete",
+      "started_at": "2026-01-01T02:00:00Z",
+      "ended_at": "2026-01-01T03:00:00Z",
+      "stop_reason": "completed",
+      "windows": 2,
+      "partial_windows": 1,
+      "degraded_windows": 0,
+      "lagged_windows": 0,
+      "seam_windows": 0,
+      "gap_us": 0,
+      "reconnects": 0,
+      "events": 20,
+      "observed_duration_us": 100000000,
+      "nominal_duration_us": 120000000,
+      "replayed_from_cursor": false
+    }
+  ],
+  "windows": [
+    {
+      "bucket_start": 1700000040,
+      "quality": "clean",
+      "flags": [],
+      "events_seen": 10,
+      "observed_duration_us": 60000000
+    },
+    {
+      "bucket_start": 1700000100,
+      "quality": "clean",
+      "flags": [],
+      "events_seen": 10,
+      "observed_duration_us": 60000000
+    },
+    {
+      "bucket_start": 1700000100,
+      "quality": "clean",
+      "flags": [],
+      "events_seen": 10,
+      "observed_duration_us": 60000000
+    },
+    {
+      "bucket_start": 1700000160,
+      "quality": "unobserved",
+      "flags": [
+        "unobserved"
+      ],
+      "events_seen": null,
+      "observed_duration_us": 0
+    },
+    {
+      "bucket_start": 1700000220,
+      "quality": "gap",
+      "flags": [
+        "degraded",
+        "gap",
+        "partial",
+        "seam"
+      ],
+      "events_seen": 10,
+      "observed_duration_us": 40000000
+    },
+    {
+      "bucket_start": 1700000220,
+      "quality": "partial",
+      "flags": [
+        "partial"
+      ],
+      "events_seen": 10,
+      "observed_duration_us": 40000000
+    },
+    {
+      "bucket_start": 1700000280,
+      "quality": "clean",
+      "flags": [],
+      "events_seen": 10,
+      "observed_duration_us": 60000000
+    }
+  ],
+  "history": {
+    "windows_are_recent_only": true,
+    "recent_seconds": 86400,
+    "recent_window_count": 7,
+    "archived_window_count": 0,
+    "index": "history/index.json",
+    "index_schema": "weatherwatch.history-index/v1",
+    "day_schema": "weatherwatch.history-day/v1",
+    "first_archived_day": null,
+    "last_archived_day": null,
+    "day_count": 0,
+    "problems": [],
+    "note": "`windows` holds only the most recent windows. Older windows are published one UTC day per file under `history/`; fetch `history/index.json` to see which days exist. The archive carries the same fields at the same precision as `windows` and adds nothing."
+  },
+  "metrics": {
+    "account.event": {
+      "total": 0,
+      "mean_rate_per_s": 0.0,
+      "observed_seconds": 240.0,
+      "observed_windows": 4,
+      "unobserved_windows": 1
+    },
+    "block.create": {
+      "total": 0,
+      "mean_rate_per_s": 0.0,
+      "observed_seconds": 240.0,
+      "observed_windows": 4,
+      "unobserved_windows": 1
+    },
+    "block.delete": {
+      "total": 0,
+      "mean_rate_per_s": 0.0,
+      "observed_seconds": 240.0,
+      "observed_windows": 4,
+      "unobserved_windows": 1
+    },
+    "follow.create": {
+      "total": 0,
+      "mean_rate_per_s": 0.0,
+      "observed_seconds": 240.0,
+      "observed_windows": 4,
+      "unobserved_windows": 1
+    },
+    "follow.delete": {
+      "total": 0,
+      "mean_rate_per_s": 0.0,
+      "observed_seconds": 240.0,
+      "observed_windows": 4,
+      "unobserved_windows": 1
+    },
+    "identity.event": {
+      "total": 0,
+      "mean_rate_per_s": 0.0,
+      "observed_seconds": 240.0,
+      "observed_windows": 4,
+      "unobserved_windows": 1
+    },
+    "like.create": {
+      "total": 0,
+      "mean_rate_per_s": 0.0,
+      "observed_seconds": 240.0,
+      "observed_windows": 4,
+      "unobserved_windows": 1
+    },
+    "like.delete": {
+      "total": 0,
+      "mean_rate_per_s": 0.0,
+      "observed_seconds": 240.0,
+      "observed_windows": 4,
+      "unobserved_windows": 1
+    },
+    "listitem.create": {
+      "total": 0,
+      "mean_rate_per_s": 0.0,
+      "observed_seconds": 240.0,
+      "observed_windows": 4,
+      "unobserved_windows": 1
+    },
+    "listitem.delete": {
+      "total": 0,
+      "mean_rate_per_s": 0.0,
+      "observed_seconds": 240.0,
+      "observed_windows": 4,
+      "unobserved_windows": 1
+    },
+    "post.create": {
+      "total": 60,
+      "mean_rate_per_s": 0.25,
+      "observed_seconds": 240.0,
+      "observed_windows": 4,
+      "unobserved_windows": 1
+    },
+    "post.create.quote": {
+      "total": 0,
+      "mean_rate_per_s": 0.0,
+      "observed_seconds": 240.0,
+      "observed_windows": 4,
+      "unobserved_windows": 1
+    },
+    "post.create.reply": {
+      "total": 0,
+      "mean_rate_per_s": 0.0,
+      "observed_seconds": 240.0,
+      "observed_windows": 4,
+      "unobserved_windows": 1
+    },
+    "post.delete": {
+      "total": 0,
+      "mean_rate_per_s": 0.0,
+      "observed_seconds": 240.0,
+      "observed_windows": 4,
+      "unobserved_windows": 1
+    },
+    "profile.update": {
+      "total": 0,
+      "mean_rate_per_s": 0.0,
+      "observed_seconds": 240.0,
+      "observed_windows": 4,
+      "unobserved_windows": 1
+    },
+    "repost.create": {
+      "total": 0,
+      "mean_rate_per_s": 0.0,
+      "observed_seconds": 240.0,
+      "observed_windows": 4,
+      "unobserved_windows": 1
+    },
+    "repost.delete": {
+      "total": 0,
+      "mean_rate_per_s": 0.0,
+      "observed_seconds": 240.0,
+      "observed_windows": 4,
+      "unobserved_windows": 1
+    }
+  },
+  "total_events": {
+    "total": 60,
+    "mean_rate_per_s": 0.25
+  },
+  "notes": [
+    "Unobserved windows are omitted from every rate; nothing is interpolated across them.",
+    "Rates divide by observed duration, not nominal window width.",
+    "No relay is treated as complete or authoritative.",
+    "Rates are as observed at this endpoint and are not estimates of total-network activity. A controlled probe (2026-08-08) compared two same-region public Jetstream endpoints over one interval and found post volumes differing by ~1.61x (same-endpoint self-control 1.000): relays are not interchangeable.",
+    "That ratio is an inter-observer comparison, not a coverage or completeness figure: there is no canonical denominator."
+  ]
+}

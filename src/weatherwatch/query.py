@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import sqlite3
 from dataclasses import dataclass, field
+from itertools import groupby
 
 from . import read
 
@@ -188,6 +189,104 @@ class Series:
         to neither numerator nor denominator — no interpolation."""
         secs = self.observed_seconds
         return (self.total / secs) if secs > 0 else None
+
+
+@dataclass(frozen=True)
+class IntervalCoverage:
+    """Bounds on time covered by the retained duration evidence.
+
+    These are not bounds on source completeness. Separate run pieces contain
+    durations, not exact coverage locations; their union may be uncertain.
+    """
+
+    first_bucket_start: int | None
+    last_bucket_end: int | None
+    observed_seconds_lower: float
+    observed_seconds_upper: float
+    recorded_observed_seconds: float
+    multi_piece_buckets: int
+    uncertain_buckets: int
+
+    @property
+    def span_seconds(self) -> int:
+        if self.first_bucket_start is None or self.last_bucket_end is None:
+            return 0
+        return self.last_bucket_end - self.first_bucket_start
+
+    @property
+    def observed_seconds(self) -> float | None:
+        if self.observed_seconds_lower == self.observed_seconds_upper:
+            return self.observed_seconds_lower
+        return None
+
+    @property
+    def coverage_ratio_lower(self) -> float | None:
+        return (self.observed_seconds_lower / self.span_seconds
+                if self.span_seconds else None)
+
+    @property
+    def coverage_ratio_upper(self) -> float | None:
+        return (self.observed_seconds_upper / self.span_seconds
+                if self.span_seconds else None)
+
+    @property
+    def coverage_ratio(self) -> float | None:
+        if self.observed_seconds is None:
+            return None
+        return self.coverage_ratio_lower
+
+    @property
+    def coverage_status(self) -> str:
+        if not self.span_seconds:
+            return "unavailable"
+        return "exact" if self.observed_seconds is not None else "bounded"
+
+
+def interval_coverage(points: list[WindowPoint]) -> IntervalCoverage:
+    """Bound the union of durations over one ordered physical bucket grid.
+
+    Within a bucket the union is at least its largest piece and at most the
+    sum of its pieces or the bucket width, whichever is smaller. This is a
+    bound on a union, not a clamp on an impossible ratio. Bounds add across
+    disjoint buckets. Event bounds cannot locate coverage, and already
+    deducted gaps must not be deducted a second time.
+
+    Raw points are preserved. Corrupt durations and incompatible grids fail
+    closed; accepting either would make even the bounds unsubstantiated.
+    Working memory is constant over the ordered health view.
+    """
+    first = last = width = None
+    lower_us = upper_us = recorded_us = split = uncertain = 0
+    for start, parts in groupby(points, key=lambda p: p.bucket_start):
+        duration_us = largest_us = pieces = 0
+        for p in parts:
+            if (type(p.bucket_width) is not int or p.bucket_width <= 0
+                    or type(start) is not int
+                    or start % p.bucket_width
+                    or (width is not None and p.bucket_width != width)):
+                raise ValueError("incompatible physical bucket grid")
+            width = p.bucket_width
+            full_us = width * 1_000_000
+            if (type(p.observed_duration_us) is not int
+                    or not 0 <= p.observed_duration_us <= full_us
+                    or (not p.observed and p.observed_duration_us != 0)):
+                raise ValueError("invalid observed duration in bucket evidence")
+            if p.observed:
+                duration_us += p.observed_duration_us
+                largest_us = max(largest_us, p.observed_duration_us)
+                pieces += 1
+        if last is not None and start < last:
+            raise ValueError("overlapping or unordered physical bucket domains")
+        first = start if first is None else first
+        last = start + width
+        upper = min(duration_us, width * 1_000_000)
+        lower_us += largest_us
+        upper_us += upper
+        recorded_us += duration_us
+        split += pieces > 1
+        uncertain += largest_us != upper
+    return IntervalCoverage(first, last, lower_us / 1e6, upper_us / 1e6,
+                            recorded_us / 1e6, split, uncertain)
 
 
 @dataclass(frozen=True)
@@ -725,6 +824,11 @@ def observation_window_health(
     ]
     if not densify or not points:
         return points
+
+    # Validate every recorded domain before walking a single grid. Otherwise
+    # an off-grid row could disappear from the dense view before any report
+    # consumer had a chance to reject the incompatible evidence.
+    interval_coverage(points)
 
     # Keyed to a LIST, not to a single point. Consecutive runs can each hold a
     # partial piece of the same wall-clock minute -- a clean shutdown commits a

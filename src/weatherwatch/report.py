@@ -1038,18 +1038,38 @@ def _legend(keys) -> str:
 
 # --- sections --------------------------------------------------------------
 
+def _coverage_percent(coverage) -> str:
+    if coverage.coverage_ratio_lower is None:
+        return "—"
+    lower = _fmt(100 * coverage.coverage_ratio_lower, 1)
+    if coverage.observed_seconds is not None:
+        return lower
+    return f"{lower}–{_fmt(100 * coverage.coverage_ratio_upper, 1)}"
+
+
+def _coverage_seconds(coverage) -> str:
+    lower = _fmt(coverage.observed_seconds_lower, 1)
+    if coverage.observed_seconds is not None:
+        return lower
+    return f"{lower}–{_fmt(coverage.observed_seconds_upper, 1)}"
+
+
 def _section_status(runs, health_points, latest, metric_totals) -> str:
     lag_vals = [p.lag_ewma_s for p in health_points if p.lag_ewma_s is not None]
     lag_max = [p.lag_max_s for p in health_points if p.lag_max_s is not None]
-    obs_s = sum(p.observed_seconds for p in health_points if p.observed)
-    first = min((p.bucket_start for p in health_points), default=None)
-    last = max((p.bucket_start + p.bucket_width for p in health_points), default=None)
-    # Denominator is the SPAN of the reported interval, not the sum of window
-    # widths. Consecutive runs can each hold a partial piece of the same
-    # wall-clock minute (a clean shutdown commits a partial window; the next
-    # run recounts the remainder under its own run_id), so summing widths
-    # would count that minute twice and quietly overstate the interval.
-    nominal = (last - first) if (first is not None and last is not None) else 0
+    coverage = query.interval_coverage(health_points)
+    first, last = coverage.first_bucket_start, coverage.last_bucket_end
+    overlap_note = (
+        f" The exact overlap is unknown for {coverage.uncertain_buckets} "
+        "bucket(s), so interval coverage is a range."
+    ) if coverage.uncertain_buckets else ""
+    coverage_note = (
+        f'<div class="note">{coverage.multi_piece_buckets} bucket(s) have '
+        'multiple recorded run pieces.' + overlap_note
+        + f' Recorded durations sum to {_fmt(coverage.recorded_observed_seconds, 1)}s '
+        'and can count the same time more than once. Coverage bounds use each '
+        'physical bucket once; event timestamps do not locate coverage.</div>'
+    ) if coverage.multi_piece_buckets else ""
 
     counts: dict[str, int] = {}
     for p in health_points:
@@ -1111,8 +1131,10 @@ def _section_status(runs, health_points, latest, metric_totals) -> str:
       <dd>{_esc(_iso(first * 1_000_000 if first else None))}<br>
           → {_esc(_iso(last * 1_000_000 if last else None))}</dd>
       <dt>Observed</dt>
-      <dd>{_fmt(obs_s, 1)}s of {_fmt(nominal, 0)}s nominal
-          ({_fmt(100 * obs_s / nominal if nominal else None, 1)}%)</dd>
+      <dd>{_coverage_seconds(coverage)}s of {_fmt(coverage.span_seconds, 0)}s nominal
+          ({_coverage_percent(coverage)}%){coverage_note}
+          <div class="note">Time coverage of recorded observations does not
+          establish endpoint completeness or total-network coverage.</div></dd>
     </dl>
   </div>
   <div class="panel">
@@ -1652,9 +1674,7 @@ def _build_html(conn, run_ids, runs, latest, series_map, totals_series,
     field_obs = field_obs or []
     field_clim = field_clim or {}
 
-    obs_s = sum(p.observed_seconds for p in health_points if p.observed)
-    nominal = (last - first) if (first is not None and last is not None) else 0
-    coverage = (100 * obs_s / nominal) if nominal else None
+    coverage = query.interval_coverage(health_points)
     quality_counts: dict[str, int] = {}
     for point in health_points:
         quality_counts[point.quality] = quality_counts.get(point.quality, 0) + 1
@@ -1725,7 +1745,7 @@ not a coverage or completeness figure: neither observer has a canonical
 denominator.</p>
 
 {_receipt("A · Observation status",
-          f"{_fmt(coverage, 1)}% of the interval observed · "
+          f"{_coverage_percent(coverage)}% of the interval observed · "
           f"{len(runs)} run{'' if len(runs) == 1 else 's'} · "
           f"{len(health_points)} windows",
           _freshness_panel(freshness, first, last)
@@ -1761,11 +1781,7 @@ time is not evidence of complete observation.
 def _summary_json(runs, latest, series_map, totals_series, health_points,
                   generated_at, freshness=None, conditions=None,
                   store=None) -> dict:
-    first = min((p.bucket_start for p in health_points), default=None)
-    last = max((p.bucket_start + p.bucket_width for p in health_points),
-               default=None)
-    span_s = (last - first) if (first is not None and last is not None) else 0
-    observed_s = sum(p.observed_seconds for p in health_points if p.observed)
+    coverage = query.interval_coverage(health_points)
     freshness = freshness or _freshness(
         health_points, generated_at, latest.bucket_width)
     published_finding = findings.observer_divergence()
@@ -1774,11 +1790,19 @@ def _summary_json(runs, latest, series_map, totals_series, health_points,
         # consumer no way to notice that `windows` had become bounded.
         "schema": archive.SCHEMA_SUMMARY,
         "interval": {
-            "first_bucket_start": first,
-            "last_bucket_end": last,
-            "span_seconds": span_s,
-            "observed_seconds": observed_s,
-            "coverage_ratio": (observed_s / span_s) if span_s else None,
+            "first_bucket_start": coverage.first_bucket_start,
+            "last_bucket_end": coverage.last_bucket_end,
+            "span_seconds": coverage.span_seconds,
+            "observed_seconds": coverage.observed_seconds,
+            "coverage_ratio": coverage.coverage_ratio,
+            "observed_seconds_lower": coverage.observed_seconds_lower,
+            "observed_seconds_upper": coverage.observed_seconds_upper,
+            "coverage_ratio_lower": coverage.coverage_ratio_lower,
+            "coverage_ratio_upper": coverage.coverage_ratio_upper,
+            "coverage_status": coverage.coverage_status,
+            "recorded_observed_seconds": coverage.recorded_observed_seconds,
+            "multi_piece_buckets": coverage.multi_piece_buckets,
+            "uncertain_buckets": coverage.uncertain_buckets,
         },
         "generated_at": generated_at,
         # Where the observation store behind this report begins. A store that

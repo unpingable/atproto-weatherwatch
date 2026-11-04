@@ -199,6 +199,12 @@ watermark for silence, so a fresh connection heartbeat does not make stalled agg
 Existing explicit empty rows remain readable as historical records; this correction does not
 rewrite their counts, coverage or verdicts. A gap says so.
 
+The report's interval coverage counts physical stream time once. When several
+runs contain partial duration records for the same minute, their exact overlap
+may be unknown; the page shows bounds and the JSON exact scalar is null. Raw
+run durations and every recorded window remain available. See
+[the public coverage contract](docs/PUBLIC-ARTIFACTS.md#interval-time-coverage).
+
 ## How it works
 
 ```text

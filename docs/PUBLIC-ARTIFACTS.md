@@ -3,7 +3,7 @@
 What `weatherwatch.neutral.zone` publishes, what a consumer may rely on, and
 which of those guarantees exist to protect the reader rather than the server.
 
-Source contract updated 2026-11-03; deployed behavior depends on the selected
+Source contract updated 2026-11-04; deployed behavior depends on the selected
 release. Recovery and publication continuity are specified in
 [`../DATA-CONTRACT.md`](../DATA-CONTRACT.md). Inherits every boundary in
 [`../src/weatherwatch/social/BOUNDARIES.md`](../src/weatherwatch/social/BOUNDARIES.md)
@@ -48,6 +48,53 @@ estate: **6,878,820 → 239,695 bytes**.
 Every other field is unchanged and was already bounded. `interval` still
 describes the **whole** observed span, not the retained tail — a consumer
 reading it learns the true extent even though `windows` no longer covers it.
+
+### Interval time coverage
+
+`interval.span_seconds` runs from the first bucket's start to the last bucket's
+end, including unobserved time. It is stream time, not the collector's uptime;
+cursor replay can cover historical stream time. Time coverage is conditional on
+the retained duration records and does not establish endpoint completeness,
+total-network coverage or historical collector correctness.
+
+Several runs can record pieces of the same physical bucket. Their stored event
+timestamps do **not** locate the coverage: a full window can cover time before
+its first event or after its last event. Adding recorded durations can count
+the same time repeatedly and previously produced fractions above one.
+
+For valid duration pieces in one bucket, covered time is at least the largest
+piece and at most the sum of the pieces or the bucket width, whichever is
+smaller. These union bounds add across disjoint buckets. A single piece or a
+full-width piece gives exact duration evidence; multiple partial pieces may
+leave an interval of possible durations. Gaps already deducted at collection
+are not deducted again. Unobserved buckets contribute zero duration and remain
+in the span. No event positions or observation continuity are invented.
+
+The additive `interval` fields are:
+
+- `observed_seconds_lower`, `observed_seconds_upper`: union duration bounds.
+- `coverage_ratio_lower`, `coverage_ratio_upper`: those bounds divided by the
+  same `span_seconds`, or null for an empty span.
+- `coverage_status`: `exact`, `bounded` or `unavailable` for an empty span.
+- `recorded_observed_seconds`: the unchanged sum of recorded run durations;
+  this can exceed the physical span and is **not** interval coverage.
+- `multi_piece_buckets`, `uncertain_buckets`: physical buckets with multiple
+  observed records, and those whose union duration is not exact.
+
+The existing `observed_seconds` and `coverage_ratio` keys remain in summary v2.
+They are exact scalars only when lower and upper bounds coincide; otherwise
+they are **null**. Consumers must handle that null and use the bounds to show a
+range. Older summaries do not carry these bounds and their scalar duration
+must not be interpreted as overlap-corrected coverage. The page uses the same
+bounds in both coverage displays and discloses uncertain overlap beside them.
+
+All recorded windows, their counts, quality/gap metadata and per-run durations
+remain unchanged in the summary and full dated archive. Metric series, rate
+denominators and baseline eligibility keep their existing conditioning rules;
+the new interval union claim does not revise them. Invalid durations (including
+negative, over-width or noninteger/nonfinite values), mixed widths, misaligned
+grids and unordered/overlapping physical bucket domains fail closed before
+replacing a published tree. They are never silently clamped into evidence.
 
 ## 3. How historical retrieval works
 
