@@ -66,6 +66,19 @@ RECONNECT_BACKOFF_CAP_S = 30.0
 #: horizon (M0 verified >=1h exact, >=6h unresponsive) and the discontinuity
 #: is recorded as a gap rather than quietly absorbed.
 GAP_ALERT_US = 2_000_000
+#: Liveness is judged by frames arriving, not by keepalive pongs. A pong
+#: travels in-band behind every frame already sent; during a cursor replay the
+#: receive queue fills, reading pauses, and the pong cannot be read until the
+#: backlog drains. On 2026-11-24 that turned a burst minute into a 33 h
+#: livelock: ping timeout, discard the open window, resume at the same cursor,
+#: repeat. A replay delivers frames continuously, so this never fires on a busy
+#: connection, while a dead or silent one is still abandoned after the same
+#: 40 s the old 30 s ping + 10 s timeout gave.
+FRAME_STALL_TIMEOUT_S = 40.0
+
+
+class StreamStalled(Exception):
+    """No frame arrived within FRAME_STALL_TIMEOUT_S."""
 
 
 def new_run_id() -> str:
@@ -344,8 +357,9 @@ class Collector:
                     async with websockets.connect(
                         url,
                         max_size=10 * 1024 * 1024,
-                        ping_interval=30,
-                        ping_timeout=10,
+                        # See FRAME_STALL_TIMEOUT_S. Server pings are still
+                        # answered as they are read.
+                        ping_interval=None,
                         close_timeout=5,
                     ) as ws:
                         LOG.info("connected %s%s", self.endpoint,
@@ -356,6 +370,7 @@ class Collector:
                             self.health.record_reconnect()
                         first_connection = False
                         backoff = RECONNECT_BACKOFF_START_S
+                        last_frame_mono = time.monotonic()
 
                         while not self._stop and not self._duration_elapsed():
                             try:
@@ -367,7 +382,12 @@ class Collector:
                                 self.acc.tick()
                                 self._flush_pending()
                                 self._record_runtime("connected", heartbeat=True)
+                                silent = time.monotonic() - last_frame_mono
+                                if silent >= FRAME_STALL_TIMEOUT_S:
+                                    raise StreamStalled(
+                                        f"no frame for {silent:.0f}s")
                                 continue
+                            last_frame_mono = time.monotonic()
                             self._handle_raw(raw)
                             self.acc.tick()
                             self._flush_pending()
