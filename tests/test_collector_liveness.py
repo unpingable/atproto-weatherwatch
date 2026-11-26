@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sys
 import time
 
 import websockets
@@ -63,6 +64,8 @@ def _production_wait_for(monkeypatch):
     """Python 3.10 (production) runs the awaitable as a task, so every
     `wait_for(ws.recv())` yields to the loop and the keepalive timer fires on
     schedule. 3.12 awaits inline and starves it, hiding the failure."""
+    if sys.version_info < (3, 12):
+        return  # the real thing
     real = asyncio.wait_for
 
     async def wait_for(aw, timeout):
