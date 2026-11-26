@@ -188,3 +188,72 @@ def test_restore_does_not_resurrect_a_stale_degraded_state(tmp_path):
 
 def test_missing_checkpoint_is_a_cold_start_not_an_error(tmp_path):
     assert ObservationHealth().load_checkpoint(tmp_path / "nope.json") is False
+
+
+# --- baseline: spikes and quieter traffic -----------------------------------
+# 2026-11-24: a 3,627 eps burst minute, folded in during warm-up, lifted the
+# baseline to ~900 eps. Overnight traffic (~340 eps) then sat below the
+# low_eps threshold, the frozen DEGRADED baseline could never be reached
+# again, and every window stayed degraded until an operator reset it.
+
+def test_one_burst_window_cannot_redefine_normal():
+    h = warm(ObservationHealth(), eps=400.0, windows=40)
+    before = h.snapshot()["baseline_eps"]
+    h.record_window(int(3627 * 60), 60.0, losses())
+    after = h.snapshot()["baseline_eps"]
+    assert after <= before * (1 + health.EWMA_ALPHA) + 1e-6
+
+
+def test_sustained_increase_is_still_learned():
+    h = warm(ObservationHealth(), eps=400.0, windows=40)
+    for _ in range(60):
+        h.record_window(int(800 * 60), 60.0, losses())
+    assert h.snapshot()["baseline_eps"] > 700
+
+
+def _inflated(baseline=907.0, quiet=340.0):
+    """DEGRADED on low_eps alone, against a baseline the feed cannot reach."""
+    h = warm(ObservationHealth(), eps=baseline, windows=40)
+    for _ in range(health.CONSECUTIVE_BAD_WINDOWS):
+        h.record_window(int(quiet * 60), 60.0, losses())
+    snap = h.snapshot()
+    assert snap["coverage_state"] == DEGRADED
+    assert snap["gate_reasons"] == ["low_eps"]
+    return h
+
+
+def test_quieter_healthy_feed_recovers_within_bound():
+    h = _inflated()
+    # Short dips stay flagged: an hour of quieter traffic is still degraded.
+    for _ in range(60):
+        h.record_window(int(340 * 60), 60.0, losses())
+    assert h.snapshot()["coverage_state"] == DEGRADED
+    # But not forever: well inside four hours the baseline has come down.
+    for _ in range(180):
+        h.record_window(int(340 * 60), 60.0, losses())
+    assert h.snapshot()["coverage_state"] == OK
+
+
+@pytest.mark.parametrize("bad", ["gap", "loss", "empty"])
+def test_failing_windows_never_lower_the_baseline(bad):
+    h = _inflated()
+    frozen = h.snapshot()["baseline_eps"]
+    for _ in range(300):
+        if bad == "gap":
+            h.record_window(int(340 * 60), 60.0, losses(gap_us=5_000_000))
+        elif bad == "loss":
+            h.record_window(int(340 * 60), 60.0, losses(parse_errors=2000))
+        else:
+            h.record_window(0, 60.0, losses())
+    assert h.snapshot()["baseline_eps"] == frozen
+    assert h.snapshot()["coverage_state"] == DEGRADED
+
+
+def test_high_lag_never_lowers_the_baseline():
+    h = _inflated()
+    frozen = h.snapshot()["baseline_eps"]
+    now = time.time()
+    for _ in range(300):
+        h.record_event_time(int((now - 600) * 1_000_000))
+        h.record_window(int(340 * 60), 60.0, losses())
+    assert h.snapshot()["baseline_eps"] == frozen

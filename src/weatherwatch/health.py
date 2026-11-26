@@ -51,6 +51,20 @@ LAG_RECOVER_THRESHOLD_S = float(os.getenv("WW_HEALTH_LAG_RECOVER_S", "30"))
 CONSECUTIVE_GOOD_WINDOWS = int(os.getenv("WW_HEALTH_GOOD_WINDOWS", "5"))
 RECALIBRATION_WINDOWS = int(os.getenv("WW_HEALTH_RECALIBRATION_WINDOWS", "3"))
 
+#: One window may lift the baseline toward at most this multiple of itself.
+#: A burst minute cannot redefine normal; a sustained rise is still learned,
+#: at up to EWMA_ALPHA * (cap - 1) per window.
+SPIKE_CAP_RATIO = float(os.getenv("WW_HEALTH_SPIKE_CAP", "2.0"))
+#: While DEGRADED on low_eps alone, the frozen baseline drifts down toward a
+#: quieter but otherwise healthy feed over this many windows, so a baseline
+#: the feed can no longer reach does not latch DEGRADED forever. Short dips
+#: stay flagged; recovery from 907 to 340 eps takes about three hours.
+DEGRADED_DECAY_SPAN = int(os.getenv("WW_HEALTH_DEGRADED_DECAY_SPAN", "180"))
+DEGRADED_DECAY_ALPHA = 2.0 / (DEGRADED_DECAY_SPAN + 1)
+#: Below this coverage the feed has collapsed rather than quietened, and the
+#: baseline stays frozen: a broken stream must never be learned as normal.
+DEGRADED_DECAY_FLOOR = float(os.getenv("WW_HEALTH_DEGRADED_DECAY_FLOOR", "0.25"))
+
 LAG_EWMA_ALPHA = float(os.getenv("WW_HEALTH_LAG_EWMA_ALPHA", "0.2"))
 LAG_CLAMP_MAX_S = 600.0
 
@@ -176,8 +190,10 @@ class ObservationHealth:
             if self._baseline_eps == 0.0:
                 self._baseline_eps = self._current_eps
             else:
+                learn = min(self._current_eps,
+                            SPIKE_CAP_RATIO * self._baseline_eps)
                 self._baseline_eps = (
-                    EWMA_ALPHA * self._current_eps
+                    EWMA_ALPHA * learn
                     + (1 - EWMA_ALPHA) * self._baseline_eps
                 )
 
@@ -217,6 +233,21 @@ class ObservationHealth:
             reasons.append("gap_observed")
 
         self._gate_reasons = reasons
+
+        # Judged on this window itself, not on streaks: a single lossy or
+        # gapped window must not teach the baseline anything.
+        quieter_but_healthy = (
+            self._state == DEGRADED
+            and set(reasons) <= {"low_eps"}
+            and events_in > 0
+            and gap_us == 0
+            and self._loss_frac <= LOSS_FRAC_HIGH_THRESHOLD
+            and self._stream_lag_s < LAG_RECOVER_THRESHOLD_S
+            and DEGRADED_DECAY_FLOOR <= coverage <= COVERAGE_RECOVER_THRESHOLD
+        )
+        if quieter_but_healthy:
+            self._baseline_eps += DEGRADED_DECAY_ALPHA * (
+                self._current_eps - self._baseline_eps)
 
         if self._state == WARMING_UP:
             if self._windows_seen >= WARMUP_WINDOWS:
