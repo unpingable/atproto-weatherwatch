@@ -159,3 +159,45 @@ def test_silent_connection_is_abandoned(conn, monkeypatch):
     c = asyncio.run(run())
     assert connections >= 2, "a silent stream must be abandoned and resumed"
     assert c._reconnects >= 1
+
+
+def test_unexpected_connection_error_logs_traceback(conn, monkeypatch, caplog):
+    monkeypatch.setattr(collector_mod, "RECONNECT_BACKOFF_START_S", 0.05)
+    real = Collector._handle_raw
+    calls = 0
+
+    def flaky(self, raw):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise AttributeError("synthetic transport fault")
+        return real(self, raw)
+
+    monkeypatch.setattr(Collector, "_handle_raw", flaky)
+    release = asyncio.Event()
+
+    async def handler(ws, path=None):
+        i = 0
+        while not release.is_set():
+            await ws.send(_frame(i))
+            i += 1
+            await asyncio.sleep(0.05)
+
+    async def run():
+        server, url = await _serve(handler)
+        try:
+            c = Collector(conn=conn, endpoint=url, duration_s=1.0,
+                          bucket_width=WIDTH)
+            await c.run()
+            return c
+        finally:
+            release.set()
+            server.close()
+            await server.wait_closed()
+
+    c = asyncio.run(run())
+    errors = [r for r in caplog.records
+              if r.getMessage().startswith("connection error")]
+    assert errors and errors[0].exc_info is not None
+    assert "synthetic transport fault" in caplog.text
+    assert c._reconnects >= 1, "reconnect behaviour is unchanged"

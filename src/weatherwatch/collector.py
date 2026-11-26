@@ -407,7 +407,17 @@ class Collector:
                     self._stop_reason = "fatal_db_error"
                     raise
                 except Exception as e:
-                    LOG.warning("connection error (%s: %s)", type(e).__name__, e)
+                    # Expected closes carry their close codes in str(e); the
+                    # transport cause, if any, says who dropped it. Anything
+                    # else is unexplained and gets its traceback. No payloads.
+                    expected = isinstance(
+                        e, (websockets.exceptions.ConnectionClosed, StreamStalled))
+                    cause = e.__cause__ or e.__context__
+                    LOG.warning(
+                        "connection error (%s: %s)%s", type(e).__name__, e,
+                        f" cause={type(cause).__name__}: {cause}" if cause else "",
+                        exc_info=not expected,
+                    )
                     self._record_runtime(
                         "disconnected", last_error_kind=type(e).__name__)
 
